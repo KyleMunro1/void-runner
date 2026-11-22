@@ -607,7 +607,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.69';
+var VERSION='V1.70';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1234,9 +1234,27 @@ function clearOfAll(cand,list){
   return true;
 }
 
+/* Brutes are slow, tanky and wide, and two of them entering side by side at
+   the same height is a wall: there is no gap to shoot through and not enough
+   time to clear either one. So no two brutes ever share a vertical slice of
+   the screen. A new brute starts high enough that its lowest pixel clears the
+   top of the highest brute already falling, and since every brute in a wave
+   falls at the same speed, that stagger holds the whole way down.
+   Scouts and drones are unaffected - they die fast enough to shoot through. */
+var BRUTE_VGAP=2;
+function bruteSpawnY(t,sy0){
+  var top=sy0,i;
+  for(i=0;i<aliens.length;i++){
+    if(aliens[i].t!==TYPES.brute)continue;
+    var above=aliens[i].y-t.h-BRUTE_VGAP;    /* bottom of the new one clears it */
+    if(above<top)top=above;
+  }
+  return top;
+}
 function spawnAlien(force){
   if(!queue.length)return true;
   var t=(queue[0]==='boss')?bossFor(wi):TYPES[queue[0]],i,spd=t.spd*curw.spd,sy0=-t.h-2;
+  if(t===TYPES.brute)sy0=bruteSpawnY(t,sy0);
   var order=[];for(i=0;i<LANES;i++)order.push(i);
   for(i=order.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tm=order[i];order[i]=order[j];order[j]=tm;}
   var threats=threatList(),lane=-1;
