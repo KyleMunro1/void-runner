@@ -79,9 +79,19 @@ function badgeInset(){
   try{h=(window.location&&window.location.hostname)||'';}catch(e){}
   return (h.indexOf('netlify')>=0)?58:0;
 }
+/* The last viewport height measured with no keyboard over it. */
+var lastFreeH=0;
 function fit(){
   var vw=(window.visualViewport&&window.visualViewport.width)||window.innerWidth;
   var vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
+  /* An on-screen keyboard shrinks visualViewport, and refitting to what is
+     left shrank the whole game to a postage stamp: you could still type, but
+     RECOVER and CANCEL were then far too small to hit. While a field is open
+     the canvas keeps the size it had before the keyboard appeared, and the
+     keyboard simply covers the bottom of it. */
+  var typing=(askName===true&&promptMode!=='show');
+  if(typing){ if(lastFreeH)vh=Math.max(vh,lastFreeH); }
+  else lastFreeH=vh;
   var inset=badgeInset();
   var avW=Math.max(80,vw-8),avH=Math.max(80,vh-inset-8);
   var s=Math.min(avW/W,avH/H);
@@ -592,7 +602,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.63';
+var VERSION='V1.66';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -662,7 +672,10 @@ function rollRarity(){
 /* Each level costs more than the last. At +50 the curve deliberately outpaces
    what a wave pays out late on, which is what keeps the XP multiplier from
    running away with the run. */
-function xpForLevel(L){return 60+(L-1)*50;}
+/* +40 a level, not +50. At +50 the cost outran what a wave pays out: from
+   about wave 25 the waves stop growing but the level cost does not, so the
+   player steadily falls behind their own run. */
+function xpForLevel(L){return 60+(L-1)*40;}
 
 /* ================= audio ================= */
 var AC=null;
@@ -906,15 +919,31 @@ function reward(n){
   while(xp>=xpNeed){xp-=xpNeed;level++;xpNeed=xpForLevel(level);pendLv++;}
 }
 /* setPage: 0 main, 1 ship colour, 2 sound */
-function pageRect(i,n){
-  var h=26,lo=112,hi=H-46,gap=9;           /* under the stat grid, over the footer */
-  /* seven rows do not fit a short canvas at the roomy gap, so tighten it
-     rather than letting the list run off the bottom */
-  if(n>1&&n*h+(n-1)*gap>hi-lo)
-    gap=Math.max(3,Math.floor((hi-lo-n*h)/(n-1)));
-  var tot=n*h+(n-1)*gap;
-  var top=(hi-lo>tot)?lo+Math.round((hi-lo-tot)/2):lo;
-  return {x:22,y:top+i*(h+gap),w:212,h:h};
+var SET_ROW_H=26, SET_ROW_GAP=9;
+/* Mid-run the live HUD sits on top and the build is worth showing; from the
+   menu there is no run, so both would be lying and neither is drawn. */
+function setShowsRun(){return !fromMenu();}
+function setRowGap(n){
+  var fixed=14+(setShowsRun()?FH+STATGRID_H+(shield?12:0):0)+FH;
+  var avail=H-(setShowsRun()?HUD_H:0)-fixed-6*6;
+  var g=SET_ROW_GAP;
+  if(n>1&&n*SET_ROW_H+(n-1)*g>avail)g=Math.max(3,Math.floor((avail-n*SET_ROW_H)/(n-1)));
+  return g;
+}
+/* heading, [wave line], [stat grid], the rows, the version - evenly spaced. */
+function setStack(){
+  var n=pageRows().length,g=setRowGap(n);
+  var hs=[14],idx={head:0};
+  if(setShowsRun()){hs.push(FH);idx.sub=hs.length-1;
+                    hs.push(STATGRID_H+(shield?12:0));idx.stats=hs.length-1;}
+  hs.push(n*SET_ROW_H+(n-1)*g);idx.rows=hs.length-1;
+  hs.push(FH);idx.ver=hs.length-1;
+  var st=evenStack(setShowsRun()?HUD_H:0,H,hs);
+  return {ys:st.ys,gap:st.gap,rowGap:g,n:n,i:idx};
+}
+function pageRect(i){
+  var st=setStack();
+  return {x:22,y:st.ys[st.i.rows]+i*(SET_ROW_H+st.rowGap),w:212,h:SET_ROW_H};
 }
 function backRect(){return {x:22,y:H-56,w:212,h:26};}
 var CHAN=[['MASTER','#4fa3ff'],['MUSIC','#c86bff'],['BULLETS','#ffb03a']];
@@ -962,11 +991,13 @@ function closeSettings(){
 /* Opened from the menu there is no run to restart or resume, and MAIN MENU is
    where you already are, so those three collapse into one BACK. */
 function fromMenu(){return setBack===MENU;}
+/* Your name and your hull are things you set before you fly, not things you
+   change with a wave paused on screen. Mid-run the page carries only what is
+   worth touching mid-run, which also buys back the room the HUD now needs. */
 function pageRows(){
-  var r=[['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['SPACESHIP','']];
-  if(fromMenu())r.push(['BACK','']);
-  else r.push(['MAIN MENU',''],['RESTART RUN',''],['RESUME','']);
-  return r;
+  if(fromMenu())
+    return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['SPACESHIP',''],['BACK','']];
+  return [['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN',''],['RESUME','']];
 }
 /* setPage 3: the switches that change how the game itself plays */
 function gpRows(){
@@ -1005,15 +1036,21 @@ function gpActivate(i){
   else if(i===2){autoLevel=!autoLevel;sfx.pick();
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
 }
+/* Dispatched on the row's label, not its position. The list differs between
+   the menu and a paused run and has been reordered more than once; an
+   index-based switch silently fires the wrong row every time that happens. */
 function activateRow(i){
-  if(i===0){setPage=4;sfx.pick();}
-  else if(i===1){setPage=2;sfx.pick();}
-  else if(i===2){setPage=3;sfx.pick();}
-  else if(i===3){setPage=1;sfx.pick();}
-  else if(fromMenu()){if(i===4){sfx.pick();closeSettings();}}
-  else if(i===4){sfx.pick();askConfirm('menu');}
-  else if(i===5){sfx.pick();askConfirm('restart');}
-  else if(i===6){closeSettings();}
+  var rows=pageRows();
+  if(i<0||i>=rows.length)return;
+  var label=rows[i][0];
+  sfx.pick();
+  if(label==='PROFILE')setPage=4;
+  else if(label==='SOUND')setPage=2;
+  else if(label==='GAMEPLAY')setPage=3;
+  else if(label==='SPACESHIP')setPage=1;
+  else if(label==='MAIN MENU')askConfirm('menu');
+  else if(label==='RESTART RUN')askConfirm('restart');
+  else closeSettings();                       /* BACK and RESUME */
 }
 function shuffle(a){
   for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t;}
@@ -1030,8 +1067,8 @@ function openLevelUp(){
   var picked=[];
   for(i=0;i<list.length;i++)
     picked.push({u:list[i],r:(list[i].kind==='once')?list[i].fixed:rollRarity()});
-  choices=picked;state=LEVELUP;sfx.level();
-  if(autoLevel){lvlFlash=0.75;applyChoice(autoPick());return;}
+  choices=picked;state=LEVELUP;sfx.level();lvlFlash=0.75;
+  if(autoLevel){applyChoice(autoPick());return;}
 }
 function grantUpgrade(u,r){
   if(u.kind==='mult'){var v=u.vals[r]/100;
@@ -1563,6 +1600,24 @@ function shipColour(k){
   for(var i=0;i<SHIP_THEMES.length;i++)if(SHIP_THEMES[i].k===k)return SHIP_THEMES[i].B;
   return '#2b7fe0';
 }
+function shipTheme4(k){
+  for(var i=0;i<SHIP_THEMES.length;i++)if(SHIP_THEMES[i].k===k)return SHIP_THEMES[i];
+  return SHIP_THEMES[1];
+}
+/* The player's own ship, one canvas pixel per sprite pixel, painted in their
+   hull colours. A coloured dot said which colour they picked; this says which
+   ship they flew. 15x15, which drops into a 20px board row. */
+var SHIPMARK_W=15;
+function drawShipMark(x,y,k){
+  var th=shipTheme4(k),r,c,ch,col;
+  for(r=0;r<SHIP.length;r++)for(c=0;c<SHIP[r].length;c++){
+    ch=SHIP[r].charAt(c);
+    if(ch==='.')continue;
+    col=(ch==='A')?th.A:(ch==='B')?th.B:(ch==='C')?th.C:PAL[ch];
+    if(!col)continue;
+    ctx.fillStyle=col;ctx.fillRect(x+c,y+r,1,1);
+  }
+}
 
 /* ================= main menu ================= */
 /* The top block is a fixed stack measured from the top of the canvas; the
@@ -1587,7 +1642,11 @@ function lbRowRect(i){return {x:16,y:lbTop()+i*LB_RH,w:W-32,h:LB_RH};}
    'do not share it' warning - so the card grows to make room for it rather
    than letting that line land on top of the buttons. */
 function cardTall(){return promptMode==='code'||promptMode==='show';}
-function nameCard(){return {x:20,y:Math.round(H*0.30),w:W-40,h:cardTall()?122:104};}
+/* Typing raises a keyboard over roughly the bottom half of the phone, so the
+   card and its buttons move up out of the way. Nothing is typed on the
+   read-only code card, so that one stays where a modal normally sits. */
+function cardTop(){return Math.round(H*(promptMode==='show'?0.30:0.15));}
+function nameCard(){return {x:20,y:cardTop(),w:W-40,h:cardTall()?122:104};}
 function nameFieldRect(){var c=nameCard();return {x:c.x+14,y:c.y+34,w:c.w-28,h:22};}
 function nameBtnTop(){var c=nameCard();return c.y+(cardTall()?86:68);}
 /* Dismiss sits on the left, confirm on the right. */
@@ -1599,17 +1658,25 @@ function nameOkRect(){var c=nameCard(),l=nameLaterRect();
   return {x:l.x+l.w+10,y:l.y,w:c.w-28-l.w-10,h:24};}
 
 /* one row of the board, shared by the menu and the full screen */
+/* rank | ship | name | WAVE n | SCORE n.  The two labels are measured and
+   right-packed first, and the name takes whatever is left, so a long name is
+   clipped instead of running under the numbers. */
 function drawLbRow(r,row,rank,me){
-  var c=shipColour(row.ship);
   if(me){ctx.fillStyle='rgba(143,233,255,0.10)';ctx.fillRect(r.x,r.y,r.w,r.h);}
   var cy=r.y+Math.round((r.h-FH)/2);
-  txt(rank,r.x+8,cy,rank<=3?'#ffd34d':'#5f6a7a',true);
-  ctx.fillStyle=c;ctx.fillRect(r.x+16,r.y+Math.round(r.h/2)-3,7,7);
-  ctx.fillStyle='#0a0f1c';ctx.fillRect(r.x+18,r.y+Math.round(r.h/2)-1,3,3);
-  var nm=String(row.name||'ANON').slice(0,10);
-  txt(nm,r.x+29,cy,me?'#ffffff':'#9fd8ff');
-  txt('W'+row.wave,r.x+r.w-78,cy,'#ffe066');
-  txt(String(row.score),r.x+r.w-6-txtW(String(row.score)),cy,'#7fb4e8');
+  txt(rank,r.x+3,cy,rank<=3?'#ffd34d':'#5f6a7a');
+  drawShipMark(r.x+22,r.y+Math.round((r.h-SHIP.length)/2),row.ship);
+
+  var sTxt='SCORE '+row.score, wTxt='WAVE '+row.wave;
+  var sX=r.x+r.w-6-txtW(sTxt);
+  var wX=sX-10-txtW(wTxt);
+  txt(wTxt,wX,cy,'#ffe066');
+  txt(sTxt,sX,cy,'#7fb4e8');
+
+  var nX=r.x+22+SHIPMARK_W+5;
+  var room=wX-6-nX;
+  var max=Math.max(1,Math.floor((room+1)/FADV));
+  txt(String(row.name||'ANON').slice(0,max),nX,cy,me?'#ffffff':'#9fd8ff');
 }
 function drawBoardBlock(){
   var p=lbPanel();panel(p,C_GOLD);
@@ -1800,6 +1867,7 @@ function closeNamePrompt(save){
   askName=false;promptMode='name';codeMsg='';codeBusy=false;
   if(nameIn){nameIn.blur();nameIn.style.display='none';
     nameIn.setAttribute('maxlength','14');}
+  fit();                       /* keyboard gone: measure the real viewport again */
 }
 
 /* ================= full leaderboard ================= */
@@ -1948,11 +2016,16 @@ function pyFromEvent(e){
   return (cy-r.top)/r.height*H;
 }
 function cardCount(){return choices?choices.length:CARDS;}
+/* heading+rule, stat grid, CHOOSE A CARD, the cards - evenly spaced under
+   the HUD. One stack so the screen and the card hit-boxes cannot disagree. */
+var LU_HEAD_H=20, CARD_H=52, CARD_GAP=13;
+function luStack(){
+  var n=cardCount(),tot=n*CARD_H+(n-1)*CARD_GAP;
+  return evenStack(HUD_H,H,[LU_HEAD_H,STATGRID_H,FH,tot]);
+}
 function cardRect(i){
-  var n=cardCount(),h=52,gap=13,tot=n*h+(n-1)*gap;
-  var lo=108,hi=H-16;                      /* below CHOOSE A CARD */
-  var top=(hi-lo>tot)?lo+Math.round((hi-lo-tot)/2):lo;
-  return {x:16,y:top+i*(h+gap),w:224,h:h};
+  var top=luStack().ys[3];
+  return {x:16,y:top+i*(CARD_H+CARD_GAP),w:224,h:CARD_H};
 }
 /* one line per card saying exactly what the pick does */
 function cardDetail(c){
@@ -2027,7 +2100,7 @@ function down(e){
       return;
     }
     var rw=pageRows();
-    for(i=0;i<rw.length;i++)if(inRect(pageRect(i,rw.length),mx,my)){activateRow(i);return;}
+    for(i=0;i<rw.length;i++)if(inRect(pageRect(i),mx,my)){activateRow(i);return;}
     return;
   }
   if(state===LEVELUP){
@@ -2183,6 +2256,13 @@ function update(dt){
   if(shake>0)shake=Math.max(0,shake-dt*14);
   if(alarmT>0)alarmT=Math.max(0,alarmT-dt);
   if(lvlFlash>0)lvlFlash=Math.max(0,lvlFlash-dt);
+  /* The clock behind every animation. It used to stop dead outside PLAY, which
+     froze the rainbow on the level-up screen and left the text caret stuck
+     mid-blink on the name and code cards. Every gameplay use of it is a
+     relative measure - gameT plus a travel time, compared against gameT in the
+     same breath - so a clock that keeps running while paused changes nothing
+     about spawning or fairness. */
+  gameT+=dt;
   if(state!==PLAY)return;
   /* Just died: hold everything in place for a beat, play out the explosion,
      then hand the ship back into the same situation it was lost in. */
@@ -2195,7 +2275,6 @@ function update(dt){
     }
     return;
   }
-  gameT+=dt;
   if(bannerT>0)bannerT-=dt;
   if(invT>0)invT-=dt;
 
@@ -2502,6 +2581,37 @@ function drawShield(){
     ctx.fillRect(Math.round(cx+Math.cos(th)*rr),Math.round(cy+Math.sin(th)*rr),1,1);
   }
 }
+var HUD_H=29;
+/* Lay blocks down a column with the SAME gap everywhere - above the first,
+   between each pair, and below the last. Surplus height is shared out
+   instead of collecting in one place, which is what left the level-up screen
+   with 6px under its heading and 128px above its cards. */
+function evenStack(top,bottom,heights){
+  var i,content=0,n=heights.length+1;
+  for(i=0;i<heights.length;i++)content+=heights[i];
+  var space=bottom-top-content;
+  var gap=Math.max(6,Math.floor(space/n));
+  /* Whole pixels only, so division leaves a remainder. Handing it out one
+     pixel at a time keeps every gap within 1px of its neighbours, instead of
+     dumping all of it into the last one. */
+  var extra=Math.max(0,space-gap*n);
+  var ys=[],y=top;
+  for(i=0;i<heights.length;i++){
+    y+=gap+(i<extra?1:0);
+    ys.push(y);y+=heights[i];
+  }
+  return {ys:ys,gap:gap};
+}
+/* A band of moving colour. Shared by the XP bar and the level-up screen so
+   the two are the same effect, not two that drift apart. */
+function rainbowBar(x,y,w,h,speed){
+  var seg=4,i,hue;
+  for(i=0;i<w;i+=seg){
+    hue=Math.floor((i/w*320+gameT*(speed||460))%360);
+    ctx.fillStyle='hsl('+hue+',100%,62%)';
+    ctx.fillRect(x+i,y,Math.min(seg,w-i),h);
+  }
+}
 function drawHud(){
   ctx.fillStyle='rgba(5,4,12,0.78)';ctx.fillRect(0,0,W,29);
   txt('SCORE '+String(score).padStart(6,'0'),2,4,'#9fd8ff');
@@ -2510,18 +2620,16 @@ function drawHud(){
   txt('XP '+xp+'/'+xpNeed,2,17,C_XP);
   if(upXp>1){var xl='x'+upXp.toFixed(2);txt(xl,W-2-txtW(xl),17,C_XP);}
   ctx.fillStyle='#13325e';ctx.fillRect(0,27,W,2);
-  if(lvlFlash>0){                     /* a level just landed: run a rainbow along it */
-    var seg=4,sx2,hue;
-    for(sx2=0;sx2<W;sx2+=seg){
-      hue=Math.floor((sx2/W*320+gameT*460)%360);
-      ctx.fillStyle='hsl('+hue+',100%,62%)';
-      ctx.fillRect(sx2,26,seg,4);
-    }
+  /* A level just landed, or the card screen is up: celebrate either way. The
+     rainbow used to be the auto-level consolation prize for having no card
+     screen; there is no reason a chosen level should be duller. */
+  if(lvlFlash>0||state===LEVELUP){
+    rainbowBar(0,26,W,4);
   }else{
     ctx.fillStyle=C_XP;ctx.fillRect(0,27,Math.round(W*Math.max(0,Math.min(1,xp/xpNeed))),2);
   }
   for(var i=0;i<lives;i++)drawHeart(212-i*12,4,'#ff4d6d');
-  drawGear(state===SETTINGS?'#ffe066':'#6f8bb0');
+  drawGear(state===SETTINGS?'#ffe066':(state===LEVELUP?'#2e3f58':'#6f8bb0'));
 
 }
 /* each stat keeps its own colour so the build reads at a glance */
@@ -2545,9 +2653,15 @@ function drawStatGrid(y){
 var STATGRID_H=41;
 function drawLevelUp(){
   ctx.fillStyle='rgba(5,4,12,0.86)';ctx.fillRect(0,0,W,H);
-  txtBig('LEVEL UP'+(pendLv>1?' +'+(pendLv-1):''),W/2,22,'#ffe066',2);
-  drawStatGrid(44);
-  txt('CHOOSE A CARD',W/2,94,'#8fe9ff',true);
+  /* The HUD is painted before this screen, so the scrim used to bury it.
+     Drawing it again on top keeps score, wave, lives and the XP bar readable
+     while you are choosing - you pick a card knowing where you stand. */
+  drawHud();
+  var ys=luStack().ys;
+  txtBig('LEVEL UP'+(pendLv>1?' +'+(pendLv-1):''),W/2,ys[0],'#ffe066',2);
+  rainbowBar(W/2-54,ys[0]+18,108,2,300);
+  drawStatGrid(ys[1]);
+  txt('CHOOSE A CARD',W/2,ys[2],'#8fe9ff',true);
   for(var i=0;i<choices.length;i++){
     var c=choices[i],rc=cardRect(i),R=RARITY[c.r];
     ctx.fillStyle='#0a0f1c';ctx.fillRect(rc.x,rc.y,rc.w,rc.h);
@@ -2683,24 +2797,18 @@ function drawSettings(){
     txt('BACK',W/2+8,r.y+10,'#9fd8ff',true);
     return;
   }
-  var rows=pageRows(),n=rows.length;
-  {
-    txtBig('SETTINGS',W/2,22,'#ffe066',2);
-    txt('LEVEL '+level+'   WAVE '+(wi+1),W/2,44,'#8fe9ff',true);
-    /* The stats float in the gap between the heading and the first row so both
-       gaps come out even, instead of all the air collecting in one place. */
-    var r0=pageRect(0,n),hb=51;
-    var sy=Math.max(hb+8,hb+Math.round((r0.y-hb-STATGRID_H-(shield?12:0))/2));
-    drawStatGrid(sy);
-    if(shield)txt('SHIELD UP',W/2,sy+STATGRID_H+4,'#8fe9ff',true);
+  var rows=pageRows(),n=rows.length,st=setStack();
+  /* Paused mid-run, the top bar stays live under the heading: score, wave,
+     lives and the XP bar, exactly as the level-up screen shows them. */
+  if(setShowsRun())drawHud();
+  txtBig('SETTINGS',W/2,st.ys[st.i.head],'#ffe066',2);
+  if(setShowsRun()){
+    txt('LEVEL '+level+'   WAVE '+(wi+1),W/2,st.ys[st.i.sub],'#8fe9ff',true);
+    drawStatGrid(st.ys[st.i.stats]);
+    if(shield)txt('SHIELD UP',W/2,st.ys[st.i.stats]+STATGRID_H+4,'#8fe9ff',true);
   }
-
-  for(i=0;i<n;i++){
-    drawRow(pageRect(i,n),rows[i][0],rows[i][1]);
-  }
-  /* anchored under the last row, never on top of it */
-  var rb=pageRect(n-1,n),fy=Math.max(rb.y+rb.h+10,H-30);
-  txt('VOID RUNNER  '+VERSION,W/2,fy,'#2e3f58',true);
+  for(i=0;i<n;i++)drawRow(pageRect(i),rows[i][0],rows[i][1]);
+  txt('VOID RUNNER  '+VERSION,W/2,st.ys[st.i.ver],'#2e3f58',true);
   if(confirmAct)drawConfirm();
 }
 function drawRow(r,label,val){
