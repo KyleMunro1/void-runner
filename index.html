@@ -181,6 +181,116 @@ var BRUTE=[
 '...kk...k.k...kk...',
 '....k....k....k....'];
 
+/* ===== the unlockable roster: one new alien after each boss ===== */
+var MITE=[
+'...FFF...',
+'..FFFFF..',
+'.FFYYYFF.',
+'FFYYDYYFF',
+'.FFYYYFF.',
+'..F.Y.F..',
+'...Y.Y...'];
+var SPLITTER=[
+'....QQQ.QQQ....',
+'..QQQQQ.QQQQQ..',
+'.QQQQQQ.QQQQQQ.',
+'QQQDDQQ.QQDDQQQ',
+'QQQQQQQ.QQQQQQQ',
+'qqqqqqq.qqqqqqq',
+'.qqqqqq.qqqqqq.',
+'..qqqqq.qqqqq..',
+'...qqq...qqq...',
+'....q.....q....',
+'.....q...q.....'];
+var BULWARK=[
+'...TTTTTTTTTTT...',
+'..TTTTTTTTTTTTT..',
+'.TTTTTTTTTTTTTTT.',
+'SSSSSSSSSSSSSSSSS',
+'SSSDDSSSSSSSDDSSS',
+'SSSDDSSSSSSSDDSSS',
+'SSSSSSSSSSSSSSSSS',
+'SsssssssssssssssS',
+'SsSSSSSSSSSSSSSsS',
+'.sssssssssssssss.',
+'..sssssssssssss..',
+'...ss.sssss.ss...',
+'....s..s.s..s....'];
+var DIVER=[
+'....III....',
+'...IIIII...',
+'..IIIIIII..',
+'..IIDDDII..',
+'.IIIDDDIII.',
+'.IIIIIIIII.',
+'iiiiiiiiiii',
+'iiiiiiiiiii',
+'.iiiiiiiii.',
+'.iiiiiiiii.',
+'..iiiiiii..',
+'...iiiii...',
+'....iii....',
+'.....i.....',
+'.....A.....'];
+var CARAPACE=[
+'.....ttttttttt.....',
+'...ttttttttttttt...',
+'..ttTTTTTTTTTTTtt..',
+'.tTTTTTTTTTTTTTTTt.',
+'tTTTTTTTTTTTTTTTTTt',
+'tTTTDDTTTTTTTDDTTTt',
+'tTTTDDTTTTTTTDDTTTt',
+'tTTTTTTTTTTTTTTTTTt',
+'ttTTTtTTTtTTTtTTTtt',
+'.tttTTTTTTTTTTTttt.',
+'..ttttTTTTTTTtttt..',
+'...ttttttttttttt...',
+'.....ttttttttt.....',
+'.......ttttt.......'];
+var KNITTER=[
+'.....NNNNN.....',
+'...NNNNNNNNN...',
+'..NNNNNNNNNNN..',
+'.NNNNDDDDDNNNN.',
+'.NNNDIIIIIDNNN.',
+'NNNNDIIIIIDNNNN',
+'NNNNDIIIIIDNNNN',
+'.NNNNDDDDDNNNN.',
+'.nnnnnnnnnnnnn.',
+'..nnnnnnnnnnn..',
+'...nn.nnnnn.nn.',
+'....n..nnn..n..',
+'.....n.n.n.n...'];
+var PHANTOM=[
+'....XXXXXXX....',
+'..XXXXXXXXXXX..',
+'.XXXXXXXXXXXXX.',
+'XXXXIIXXXIIXXXX',
+'XXXXIIXXXIIXXXX',
+'XXXXXXXXXXXXXXX',
+'XXXXXXXXXXXXXXX',
+'.XXXXXXXXXXXXX.',
+'.XXiXXXiXXXiXX.',
+'..XX.XXXXX.XX..',
+'...X...X...X...',
+'..i...i.i...i..'];
+var COLOSSUS=[
+'......eeeeeeeeeee......',
+'....eeeEEEEEEEEEeee....',
+'..eeEEEEEEEEEEEEEEEee..',
+'.eEEEEEEEEEEEEEEEEEEEe.',
+'eEEEEEEEEEEEEEEEEEEEEEe',
+'eEEEDDEEEEEEEEEEEDDEEEe',
+'eEEEDDEEEEEEEEEEEDDEEEe',
+'eEEEEEEEEEEEEEEEEEEEEEe',
+'eEEEEEEEFFFFFFFEEEEEEEe',
+'eEEEEEEEEFFFFFEEEEEEEEe',
+'eEEEEEEEEEEEEEEEEEEEEEe',
+'KKKKKKKKKKKKKKKKKKKKKKK',
+'.KKKKKKKKKKKKKKKKKKKKK.',
+'..KKKKK.KKKKKKK.KKKKK..',
+'...KKK...KKKKK...KKK...',
+'....k.....kkk.....k....'];
 function mk(rows,over){
   var h=rows.length,w=rows[0].length;
   var c=document.createElement('canvas');c.width=w;c.height=h;
@@ -456,11 +566,66 @@ var HITW=Math.round(SHIP_W*0.34);
 var TYPES={
   scout:{spr:mk(SCOUT),rows:SCOUT,hp:20,spd:46*VS,xp:10,col:'#4fc01f',dth:'A SCOUT RAN YOU DOWN'},
   drone:{spr:mk(DRONE),rows:DRONE,hp:40,spd:34*VS,xp:25,col:'#c86bff',dth:'A DRONE RAN YOU DOWN'},
-  brute:{spr:mk(BRUTE),rows:BRUTE,hp:90,spd:24*VS,xp:60,col:'#ff5555',dth:'A BRUTE RAN YOU DOWN'},
+  brute:{spr:mk(BRUTE),rows:BRUTE,hp:90,spd:24*VS,xp:60,col:'#ff5555',
+         maxOn:6,dth:'A BRUTE RAN YOU DOWN'},
+  /* --- unlocked one at a time, each after a boss falls --- */
+  mite:    {spr:mk(MITE),    rows:MITE,    hp:15, spd:78*VS,xp:14, col:'#ffd34d',
+            dth:'A MITE RAN YOU DOWN'},
+  splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:55, spd:30*VS,xp:45, col:'#c8ff4d',
+            splits:2,maxOn:4,dth:'A SPLITTER RAN YOU DOWN'},
+  bulwark: {spr:mk(BULWARK), rows:BULWARK, hp:45, spd:26*VS,xp:75, col:'#19d0c8',
+            shield:55,maxOn:4,dth:'A BULWARK RAN YOU DOWN'},
+  diver:   {spr:mk(DIVER),   rows:DIVER,   hp:45, spd:26*VS,xp:55, col:'#e8f2ff',
+            accel:3.0,dth:'A DIVER RAN YOU DOWN'},
+  carapace:{spr:mk(CARAPACE),rows:CARAPACE,hp:85, spd:22*VS,xp:90, col:'#19d0c8',
+            dr:6,maxOn:4,dth:'A CARAPACE RAN YOU DOWN'},
+  knitter: {spr:mk(KNITTER), rows:KNITTER, hp:80, spd:28*VS,xp:85, col:'#ff5fd2',
+            regen:0.045,dth:'A KNITTER RAN YOU DOWN'},
+  phantom: {spr:mk(PHANTOM), rows:PHANTOM, hp:70, spd:36*VS,xp:95, col:'#9fb0c8',
+            phase:[0.9,0.55],maxOn:4,dth:'A PHANTOM RAN YOU DOWN'},
+  colossus:{spr:mk(COLOSSUS),rows:COLOSSUS,hp:190,spd:16*VS,xp:170,col:'#ff8a2b',
+            maxOn:2,dth:'A COLOSSUS RAN YOU DOWN'},
   /* every 10th wave: 8x a brute, but it crawls, so it is a siege not an ambush */
   boss: {spr:mk(BOSS), rows:BOSS, hp:720,spd:7*VS,xp:500,col:'#ffd34d',boss:true,
          nm:'WARDEN',dth:'THE WARDEN RAN YOU DOWN'}
 };
+/* Scouts and drones carry waves 1-10 alone. Every boss that falls adds one
+   more kind for good, so the back half of a run is fought against a roster
+   the front half never sees. A type's weight is highest the decade it
+   arrives and decays as newer ones land, down to a floor it never passes:
+   wave 90 still throws the odd scout, it just is not the story any more. */
+var ROSTER=[
+  {k:'scout',   from:1,  base:1.00},
+  {k:'drone',   from:1,  base:0.85},
+  {k:'brute',   from:11, base:0.80},
+  {k:'mite',    from:21, base:0.80},
+  {k:'splitter',from:31, base:0.80},
+  {k:'bulwark', from:41, base:0.75},
+  {k:'diver',   from:51, base:0.80},
+  {k:'carapace',from:61, base:0.70},
+  {k:'knitter', from:71, base:0.70},
+  {k:'phantom', from:81, base:0.70},
+  {k:'colossus',from:91, base:0.45}
+];
+var TIER_DECAY=0.62, TIER_FLOOR=0.10, TIER_INTRO=0.30;
+function tierOf(wave){return Math.floor((wave-1)/10);}
+function rosterWeights(wave){
+  var out=[],i,r,since,w,into;
+  for(i=0;i<ROSTER.length;i++){
+    r=ROSTER[i];
+    if(wave<r.from)continue;
+    since=tierOf(wave)-tierOf(r.from);
+    w=r.base*Math.max(TIER_FLOOR,Math.pow(TIER_DECAY,since));
+    /* A newcomer eases in over its own decade rather than arriving at full
+       strength: the wave after a boss used to leap straight to nine brutes. */
+    if(since===0&&r.from>1){
+      into=Math.max(0,Math.min(9,wave-r.from))/9;
+      w*=TIER_INTRO+(1-TIER_INTRO)*into;
+    }
+    out.push({k:r.k,w:w});
+  }
+  return out;
+}
 /* One boss per tenth wave, each its own shape and palette. The last is bigger
    than the rest and hits harder: it is meant to end the run or be the run. */
 var BOSSES=[
@@ -485,7 +650,7 @@ for(var bi=1;bi<BOSSES.length;bi++){
   bv.dth='THE '+bv.nm.replace('THE ','')+' RAN YOU DOWN';
 }
 for(var k in TYPES){
-  var t=TYPES[k];t.fl=scale2(whiten(t.spr));t.spr=scale2(t.spr);
+  var t=TYPES[k];t.key=k;t.fl=scale2(whiten(t.spr));t.spr=scale2(t.spr);
   t.w=t.spr.width;t.h=t.spr.height;
 }
 for(var bj=1;bj<BOSSES.length;bj++){
@@ -607,28 +772,42 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.73';
+var VERSION='V1.74';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
 function waveDef(w){
-  var boss=(w+1)%10===0;
+  var boss=(w+1)%10===0,wave=w+1;
   var total=Math.min(36,Math.round(5+w*1.6));
   if(boss)total=Math.max(4,Math.round(total*0.45));   /* the boss is the wave */
-  /* Brutes used to reach their maximum share by wave 15 and sit there for
-     the remaining 85 waves: 3 of them at wave 8, twelve by wave 15. A
-     plausible player could not clear wave 15 at all. The ramp now reaches
-     its maximum around wave 35 instead, so brutes keep growing through most
-     of a run rather than maxing out in the first fifth of it. */
-  var bruteShare=Math.min(0.40,Math.max(0,(w-3)*0.013));
-  var droneShare=Math.min(0.44,Math.max(0,(w-1)*0.055));
-  var brute=Math.round(total*bruteShare);
-  var drone=Math.round(total*droneShare);
-  var scout=Math.max(1,total-brute-drone);
-  return {scout:scout,drone:drone,brute:brute,boss:boss,
+  /* The mix is dealt from whatever the roster has unlocked by this wave,
+     weighted so the newest arrivals dominate and the old guard thins out
+     without ever disappearing. Difficulty comes from WHAT is on screen
+     rather than simply more of it. */
+  var ws=rosterWeights(wave),tot=0,i,mix={};
+  for(i=0;i<ws.length;i++)tot+=ws[i].w;
+  var left=total,acc=0;
+  for(i=0;i<ws.length;i++){
+    acc+=ws[i].w;
+    /* largest-remainder down the list, so the counts always sum to total */
+    var upto=Math.round(total*acc/tot),n=Math.max(0,upto-(total-left));
+    if(i===ws.length-1)n=left;
+    n=Math.min(n,left);mix[ws[i].k]=n;left-=n;
+  }
+  /* waves 1-10 must never be empty of the only two kinds they have */
+  if(!boss&&(mix.scout||0)+(mix.drone||0)===0&&total>0){mix.scout=1;}
+  return {mix:mix,boss:boss,total:total,
     conc:Math.min(9,2+Math.floor(w/2.0))+(boss?2:0),
-    gap:Math.max(0.26,1.60*Math.pow(0.945,w)),
-    hp:1+w*0.12,
+    /* Late enemies are individually far tougher, so the same 0.26s burst
+       that worked against scouts buries you against a roster of heavies.
+       The floor eases out as the roster grows: the wave still holds just as
+       many, they simply do not all arrive at once. */
+    gap:Math.max(0.26+0.020*tierOf(w+1),1.60*Math.pow(0.945,w)),
+    /* The roster now carries the escalation - wave 60 is fought against
+       things wave 10 never saw - so the blanket health multiplier no longer
+       has to do that job on its own. At 0.12 the new heavies compounded with
+       it and nothing past wave 25 was survivable. */
+    hp:1+w*0.07,
     spd:Math.min(2.6,1+w*0.030)};
 }
 function meteorPlan(w){
@@ -1140,12 +1319,14 @@ function jumpToWave(n){
   state=PLAY;MUS.start();
 }
 function buildQueue(w){
-  var q=[],i;
-  for(i=0;i<w.scout;i++)q.push('scout');
-  for(i=0;i<w.drone;i++)q.push('drone');
-  for(i=0;i<w.brute;i++)q.push('brute');
+  var q=[],k,i,n;
+  for(k in w.mix){for(i=0,n=w.mix[k];i<n;i++)q.push(k);}
   for(i=q.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var t=q[i];q[i]=q[j];q[j]=t;}
-  if(q[0]==='brute'){for(i=1;i<q.length;i++){if(q[i]!=='brute'){q[0]=q[i];q[i]='brute';break;}}}
+  /* never open a wave with one of the heavy, capped kinds */
+  if(q.length&&TYPES[q[0]]&&TYPES[q[0]].maxOn!==undefined){
+    for(i=1;i<q.length;i++)
+      if(!TYPES[q[i]]||TYPES[q[i]].maxOn===undefined){var h=q[0];q[0]=q[i];q[i]=h;break;}
+  }
   if(w.boss)q.unshift('boss');          /* lead with it, so there is time to fight */
   return q;
 }
@@ -1254,10 +1435,23 @@ var BRUTE_VGAP=2;
    does. When the cap is reached the queue simply serves something else first,
    so the wave keeps flowing and the brutes arrive spread out instead of
    together. */
-function maxBrutesOnScreen(){return Math.min(6,1+Math.floor(wi/7));}
-function bruteCount(){
+function maxOnScreen(t){
+  if(!t||t.maxOn===undefined)return 1e9;
+  return Math.min(t.maxOn,1+Math.floor(wi/7));
+}
+/* Each heavy kind had its own limit, but nothing stopped four carapaces,
+   four phantoms and two colossi sharing a screen. This is the ceiling on all
+   of them together, so the light fast ones always have room to appear and a
+   late wave is still a mix rather than a slab. */
+function maxHeavies(){return Math.min(6,2+Math.floor(wi/14));}
+function heavyCount(){
   var n=0,i;
-  for(i=0;i<aliens.length;i++)if(aliens[i].t===TYPES.brute)n++;
+  for(i=0;i<aliens.length;i++)if(spacedKind(aliens[i].t))n++;
+  return n;
+}
+function countOf(t){
+  var n=0,i;
+  for(i=0;i<aliens.length;i++)if(aliens[i].t===t)n++;
   return n;
 }
 /* Staggering at spawn is not enough on its own. Being clipped by an alien
@@ -1267,20 +1461,28 @@ function bruteCount(){
    is enforced every frame. The lowest brute holds its place and the ones
    above are nudged UP, never down, so this can only ever delay a brute,
    never bring it down on the player sooner. */
+/* Applied to every heavy kind, each against its OWN sort: brutes avoid
+   brutes, colossi avoid colossi. The small fast ones are left to crowd. */
+function spacedKind(t){return t&&t.maxOn!==undefined;}
 function enforceBruteSpacing(){
-  var b=[],i;
-  for(i=0;i<aliens.length;i++)if(aliens[i].t===TYPES.brute)b.push(aliens[i]);
-  if(b.length<2)return;
-  b.sort(function(p,q){return q.y-p.y;});        /* lowest first */
-  for(i=1;i<b.length;i++){
-    var limit=b[i-1].y-b[i].t.h-BRUTE_VGAP;
-    if(b[i].y>limit)b[i].y=limit;
+  var i,j,g,list=[];
+  for(i=0;i<aliens.length;i++)if(spacedKind(aliens[i].t)&&list.indexOf(aliens[i].t)<0)
+    list.push(aliens[i].t);
+  for(j=0;j<list.length;j++){
+    var b=[];
+    for(i=0;i<aliens.length;i++)if(aliens[i].t===list[j])b.push(aliens[i]);
+    if(b.length<2)continue;
+    b.sort(function(p,q){return q.y-p.y;});      /* lowest first */
+    for(i=1;i<b.length;i++){
+      var limit=b[i-1].y-b[i].t.h-BRUTE_VGAP;
+      if(b[i].y>limit)b[i].y=limit;
+    }
   }
 }
 function bruteSpawnY(t,sy0){
   var top=sy0,i;
   for(i=0;i<aliens.length;i++){
-    if(aliens[i].t!==TYPES.brute)continue;
+    if(aliens[i].t!==t)continue;
     var above=aliens[i].y-t.h-BRUTE_VGAP;    /* bottom of the new one clears it */
     if(above<top)top=above;
   }
@@ -1290,15 +1492,23 @@ function spawnAlien(force){
   if(!queue.length)return true;
   /* Normally the front of the queue, but a brute waits its turn when there
      are already as many on screen as this wave allows. */
-  var qi=0;
-  if(queue[0]==='brute'&&!force&&bruteCount()>=maxBrutesOnScreen()){
+  var qi=0,head=TYPES[queue[0]],heavies=heavyCount(),hcap=maxHeavies();
+  function blocked(ct){
+    if(!ct)return false;
+    if(countOf(ct)>=maxOnScreen(ct))return true;
+    return spacedKind(ct)&&heavies>=hcap;
+  }
+  if(!force&&blocked(head)){
     var alt=-1,q;
-    for(q=1;q<queue.length;q++)if(queue[q]!=='brute'){alt=q;break;}
-    if(alt<0)return false;            /* nothing but brutes left: wait for one */
+    for(q=1;q<queue.length;q++)if(!blocked(TYPES[queue[q]])){alt=q;break;}
+    if(alt<0)return false;            /* everything left is at its cap: wait */
     qi=alt;
   }
   var t=(queue[qi]==='boss')?bossFor(wi):TYPES[queue[qi]],i,spd=t.spd*curw.spd,sy0=-t.h-2;
-  if(t===TYPES.brute)sy0=bruteSpawnY(t,sy0);
+  if(spacedKind(t))sy0=bruteSpawnY(t,sy0);
+  /* a diver ends up far faster than it starts, so the fairness guard has to
+     reason about the speed it will actually arrive at, not its opening crawl */
+  var guardSpd=t.accel?spd*t.accel:spd;
   var order=[];for(i=0;i<LANES;i++)order.push(i);
   for(i=order.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tm=order[i];order[i]=order[j];order[j]=tm;}
   var threats=threatList(),lane=-1;
@@ -1308,7 +1518,7 @@ function spawnAlien(force){
       if(aliens[a].y<104&&Math.abs(aliens[a].x-lx)<46){clash=true;break;}
     if(clash)continue;
     var cand={x:lx,hw:t.w/2,
-      t0:gameT+(SHIP_Y-(sy0+t.h))/spd,t1:gameT+((SHIP_Y+SHIP_H)-sy0)/spd};
+      t0:gameT+(SHIP_Y-(sy0+t.h))/guardSpd,t1:gameT+((SHIP_Y+SHIP_H)-sy0)/spd};
     if(clearOfAll(cand,threats)&&reachableGap(cand,threats)){lane=order[i];break;}
   }
   /* Nowhere fair to put it: hold the alien back rather than wall the player in.
@@ -1329,7 +1539,9 @@ function spawnAlien(force){
   var x=laneX(lane)+Math.round((Math.random()*2-1)*5),half=t.w/2;
   x=Math.max(half+2,Math.min(W-half-2,x));
   var hp=t.hp*curw.hp;
-  aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,
+  aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
+    sh:t.shield?t.shield*curw.hp:0,shmax:t.shield?t.shield*curw.hp:0,
+    quiet:0,ph:0,solid:true,
     bites:makeAlienBites(t,5+Math.floor(t.w/8))});
   return true;
 }
@@ -2307,10 +2519,22 @@ window.addEventListener('touchend',up);
 function killAlien(a,i){
   reward(a.t.xp);kills++;
   var cy=a.y+a.t.h/2;
+  /* killing a splitter does not clear the space, it fills it */
+  if(a.t.splits){
+    var mt=TYPES.mite,n,sx,mhp=mt.hp*curw.hp;
+    for(n=0;n<a.t.splits;n++){
+      sx=a.x+(n===0?-a.t.w*0.28:a.t.w*0.28);
+      sx=Math.max(mt.w/2+2,Math.min(W-mt.w/2-2,sx));
+      aliens.push({t:mt,x:sx,y:a.y+Math.round(a.t.h/2-mt.h/2),hp:mhp,max:mhp,
+        fl:0,spd:mt.spd*curw.spd,base:mt.spd*curw.spd,sh:0,shmax:0,
+        quiet:0,ph:0,solid:true,bites:makeAlienBites(mt,5)});
+    }
+    burst(a.x,cy,14,a.t.col,1.5);
+  }
   if(a.t.boss){burst(a.x,cy,40,a.t.col,2.2);burst(a.x,cy,20,'#ffffff',1.5);
     sfx.killBoss();shake=Math.max(shake,6);bossBounty();}
-  else if(a.t===TYPES.brute){burst(a.x,cy,24,a.t.col,1.8);sfx.killBrute();shake=Math.max(shake,3);}
-  else if(a.t===TYPES.drone){burst(a.x,cy,15,a.t.col,1.3);sfx.killDrone();}
+  else if(a.t.w>=34){burst(a.x,cy,24,a.t.col,1.8);sfx.killBrute();shake=Math.max(shake,3);}
+  else if(a.t.w>=24){burst(a.x,cy,15,a.t.col,1.3);sfx.killDrone();}
   else{burst(a.x,cy,10,a.t.col,1.3);sfx.killScout();}
   aliens.splice(i,1);
 }
@@ -2466,11 +2690,20 @@ function update(dt){
     for(var i=0;i<aliens.length;i++){
       var a=aliens[i],aw=a.t.w/2;
       /* symmetric about the centre, to match where it is drawn */
-      if(bu.x+1>=a.x-aw&&bu.x-1<=a.x+aw&&bu.y<=a.y+a.t.h&&bu.y+5>=a.y){
+      if(a.solid&&bu.x+1>=a.x-aw&&bu.x-1<=a.x+aw&&bu.y<=a.y+a.t.h&&bu.y+5>=a.y){
         var cr=upCrit>0&&Math.random()*100<upCrit;
         var dv=bulletDmg()*(cr?upCritD:1);
-        a.hp-=dv;a.fl=0.07;hits++;burst(bu.x,bu.y,cr?4:2,cr?'#ffd34d':'#ffe066',cr?1.2:0.9);
-        addDmgNum(a.x,bu.y,dv,cr,a.t.w/2);
+        /* a carapace shrugs a flat amount off every hit, so a wall of tiny
+           fast shots barely scratches it and a heavy shot still tells */
+        if(a.t.dr)dv=Math.max(1,dv-a.t.dr);
+        a.quiet=0;
+        if(a.sh>0){                       /* the shield eats it first */
+          var into=Math.min(a.sh,dv);a.sh-=into;dv-=into;
+          burst(bu.x,bu.y,3,'#19d0c8',1.1);
+        }
+        if(dv>0)a.hp-=dv;
+        a.fl=0.07;hits++;burst(bu.x,bu.y,cr?4:2,cr?'#ffd34d':'#ffe066',cr?1.2:0.9);
+        addDmgNum(a.x,bu.y,dv>0?dv:into,cr,a.t.w/2);
         bullets.splice(b,1);gone=true;
         if(a.hp<=0)killAlien(a,i);else sfx.hit();
         break;
@@ -2506,6 +2739,21 @@ function update(dt){
   enforceBruteSpacing();
   for(var j=aliens.length-1;j>=0;j--){
     var al=aliens[j];
+    /* a diver starts slow and comes down like a thrown knife */
+    if(al.t.accel&&al.spd<al.base*al.t.accel)
+      al.spd=Math.min(al.base*al.t.accel,al.spd+al.base*al.t.accel*0.42*dt);
+    /* a knitter stitches itself back together if you look away */
+    if(al.t.regen){
+      al.quiet+=dt;
+      if(al.quiet>1.2&&al.hp<al.max)al.hp=Math.min(al.max,al.hp+al.max*al.t.regen*dt);
+    }
+    /* a phantom fades out and bullets pass straight through */
+    if(al.t.phase){
+      al.ph+=dt;
+      var on=al.t.phase[0],off=al.t.phase[1];
+      if(al.solid&&al.ph>=on){al.solid=false;al.ph=0;}
+      else if(!al.solid&&al.ph>=off){al.solid=true;al.ph=0;}
+    }
     al.y+=al.spd*dt;
     if(al.fl>0)al.fl-=dt;
     if(al.y>H+4){
@@ -2720,11 +2968,26 @@ function drawAlienDecay(a){
 }
 function drawAliens(){
   for(var i=0;i<aliens.length;i++){
-    var a=aliens[i];
+    var a=aliens[i],bw=a.t.w,x0=Math.round(a.x-bw/2);
+    /* A phased phantom is see-through and cannot be shot, but it can still
+       run you down, so it has to stay clearly visible - faint, not absent. */
+    if(!a.solid)ctx.globalAlpha=0.28;
     spr(a.fl>0?a.t.fl:a.t.spr,a.x,a.y);
-    if(a.fl<=0)drawAlienDecay(a);
+    if(a.fl<=0&&a.solid)drawAlienDecay(a);
+    ctx.globalAlpha=1;
+    if(!a.solid&&a.y>2){                      /* dashed outline while phased */
+      ctx.fillStyle='#9fb0c8';
+      for(var d=0;d<bw;d+=4){ctx.fillRect(x0+d,Math.round(a.y)-2,2,1);
+                             ctx.fillRect(x0+d,Math.round(a.y+a.t.h)+1,2,1);}
+    }
+    var y0=Math.round(a.y)-4;
+    if(a.sh>0&&a.y>2){                        /* shield sits above the health */
+      ctx.fillStyle='#0b2b34';ctx.fillRect(x0,y0,bw,2);
+      ctx.fillStyle='#19d0c8';
+      ctx.fillRect(x0,y0,Math.max(1,Math.round(bw*a.sh/a.shmax)),2);
+      y0-=3;
+    }
     if(a.hp<a.max&&a.y>2){
-      var bw=a.t.w,x0=Math.round(a.x-bw/2),y0=Math.round(a.y)-4;
       ctx.fillStyle='#3a0d0d';ctx.fillRect(x0,y0,bw,2);
       ctx.fillStyle=a.hp/a.max>0.45?'#4fc01f':'#ffb03a';
       ctx.fillRect(x0,y0,Math.max(1,Math.round(bw*a.hp/a.max)),2);
