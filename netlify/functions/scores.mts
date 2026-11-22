@@ -32,7 +32,7 @@ type Row = {
 /* FAE is one player's own hull. It has to be listed here or the server
  * would quietly coerce her runs to BLUE on the board - the same kind of
  * client/server mismatch that rejected every insanity wave. */
-const SHIPS = ["YELLOW", "BLUE", "RED", "GREEN", "ORANGE", "PURPLE", "FAE"];
+const SHIPS = ["YELLOW", "BLUE", "RED", "GREEN", "ORANGE", "PURPLE", "FAE", "SABLE"];
 
 /* Everything below comes off the public internet, so none of it is trusted. */
 function cleanName(v: unknown): string {

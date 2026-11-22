@@ -124,18 +124,20 @@ var PAL={
   X:'#2a2340',                      /* void */
   I:'#e8f2ff',i:'#9fb0c8'           /* bone */
 };
-var SHIP=[
-'.......D.......',
+/* H marks the leading edge of each wing, so a hull can carry a glint there.
+   Every theme without its own H gets its A, which is what these pixels were
+   before, so every existing ship is pixel-for-pixel unchanged. */
+var SHIP=['.......D.......',
 '.......A.......',
-'......AAA......',
+'......HAH......',
 '......ABA......',
-'.....AABAA.....',
+'.....HABAH.....',
 '.....ABBBA.....',
-'....AABBBAA....',
-'...AABBBBBAA...',
-'..AABBBBBBBAA..',
-'.AAABBBBBBBAAA.',
-'AAAABBBBBBBAAAA',
+'....HABBBAH....',
+'...HABBBBBAH...',
+'..HABBBBBBBAH..',
+'.HAABBBBBBBAAH.',
+'HAAABBBBBBBAAAH',
 'C..CBBBBBBBC..C',
 '....CBBBBBC....',
 '.....C.C.C.....',
@@ -556,7 +558,10 @@ var SHIP_THEMES=[
      people's screens too - it is only SELECTABLE by her. The sprite's A
      pixels are the wings, B the fuselage, so gold wings over a much darker
      green than the standard hull. */
-  {k:'FAE',   A:'#ffd34d',B:'#1e5c1e',C:'#0d2a10',only:'hfnvug'}
+  {k:'FAE',   A:'#ffd34d',B:'#1e5c1e',C:'#0d2a10',only:'hfnvug'},
+  /* Dark grey hull, gold wings, and a white glint picked out along the wings'
+     leading edge - the only hull so far to declare its own H. */
+  {k:'SABLE', A:'#e8b835',B:'#4f5661',C:'#23262c',H:'#ffffff',only:'1m1xx6o'}
 ];
 /* Gated on a HASH of the player id, never the id itself: the id doubles as
    that player's recovery code, so hardcoding it here would publish it to
@@ -585,7 +590,11 @@ var shipTheme=1;                       /* blue stays the default hull */
 try{var _st=localStorage.getItem('vr_ship');
   if(_st!==null)for(var si0=0;si0<SHIP_THEMES.length;si0++)
     if(SHIP_THEMES[si0].k===_st)shipTheme=si0;}catch(e){}
-for(var ti=0;ti<SHIP_THEMES.length;ti++)SHIP_THEMES[ti].icon=mk(SHIP,SHIP_THEMES[ti]);
+for(var ti=0;ti<SHIP_THEMES.length;ti++){
+  /* no glint declared means the edge is simply part of the wing */
+  if(!SHIP_THEMES[ti].H)SHIP_THEMES[ti].H=SHIP_THEMES[ti].A;
+  SHIP_THEMES[ti].icon=mk(SHIP,SHIP_THEMES[ti]);
+}
 var SHIP_SPR=scale2(mk(SHIP,SHIP_THEMES[shipTheme]));
 var SHIP_W=SHIP_SPR.width,SHIP_H=SHIP_SPR.height;
 function setShipTheme(i){
@@ -936,7 +945,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.91';
+var VERSION='V1.92';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
