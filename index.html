@@ -4,6 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
 <title>VOID RUNNER</title>
+<!-- Added to the home screen, the game is a standalone web app. That is not
+     just cosmetic: WebKit exempts home-screen web apps from its 7-day wipe of
+     script-writable storage, so an installed game keeps the player's name and
+     recovery code instead of forgetting them after a week away. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#05040c">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-title" content="Void Runner">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{height:100%;height:100dvh;background:#05040c;overflow:hidden;overscroll-behavior:none;
@@ -580,7 +592,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.59';
+var VERSION='V1.63';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -962,16 +974,24 @@ function gpRows(){
           ['METEORS',meteorsOn?'ON':'OFF'],
           ['AUTO LEVEL',autoLevel?'ON':'OFF']];
 }
-/* setPage 4: who you are. Just the name for now. */
-function pfRows(){return [['PLAYER NAME',playerName||'NOT SET']];}
+/* setPage 4: who you are, and how to prove it on another phone. */
+function pfRows(){
+  return [['PLAYER NAME',playerName||'NOT SET'],
+          ['RECOVERY CODE','SHOW'],
+          ['USE A CODE','']];
+}
 function pfRect(i){
   var h=30,gap=12,n=pfRows().length,tot=n*h+(n-1)*gap;
   return {x:22,y:Math.max(84,Math.round((H-56-tot)/2))+i*(h+gap),w:212,h:h};
 }
+/* The card floats over the settings page, so a run paused underneath stays
+   exactly where it was. */
 function pfActivate(i){
-  if(i===0){sfx.pick();var back=setBack;closeSettings();
-    if(back!==MENU)toMenu();
-    openNamePrompt(true);}
+  if(i!==0&&i!==1&&i!==2)return;
+  sfx.pick();
+  if(i===0)openNamePrompt(true);
+  else if(i===1)openCodeShow();
+  else openCodePrompt();
 }
 function gpRect(i){
   var h=30,gap=12,n=gpRows().length,tot=n*h+(n-1)*gap;
@@ -1371,17 +1391,101 @@ function burst(x,y,n,col,pow){
 /* A player is a random id kept in this browser, not an account: no sign-in,
    no password, nothing to lose. The name and hull ride along with each score
    so the board can show both. */
+/* The player id IS the recovery code, so it has to be readable off a screen
+   and typed back in without a squint: no 0/O, no 1/l/i, no u. 30 characters,
+   12 long, which is 5.3e17 combinations - nobody is guessing their way onto
+   somebody else's row. Anyone holding the code can post as that player, so it
+   is a 'keep it to yourself' code, not a password. */
+var CODE_ALPHA='23456789abcdefghjkmnpqrstvwxyz';
+var CODE_LEN=12;
+function newCode(){
+  var out='',i,n;
+  for(i=0;i<CODE_LEN;i++){
+    n=Math.floor(Math.random()*CODE_ALPHA.length);
+    if(n>=CODE_ALPHA.length)n=CODE_ALPHA.length-1;
+    out+=CODE_ALPHA.charAt(n);
+  }
+  return out;
+}
+/* Forgiving about how it comes back in: any case, with or without the dashes
+   and spaces the card shows it in. */
+function cleanCode(v){
+  return String(v||'').toLowerCase().replace(/[^a-z0-9]/g,'').slice(0,32);
+}
+function codeOk(v){return /^[a-z0-9]{6,32}$/.test(v);}
+/* Shown in groups of four. Reading twelve unbroken characters off a phone and
+   typing them into another one is how people drop a character. */
+function codeFmt(v){
+  var c=String(v||'').toUpperCase(),out='',i;
+  for(i=0;i<c.length;i++){if(i&&i%4===0)out+='-';out+=c.charAt(i);}
+  return out;
+}
+
 var playerId='',playerName='',askName=false,nameEdit=false,nameDraft='',nameCaret=0;
+/* 'name' asks who you are, 'code' takes a code off another device, 'show'
+   just displays yours. All three share the one card and the one input. */
+var promptMode='name',codeMsg='',codeBusy=false;
 try{playerId=localStorage.getItem('vr_pid')||'';}catch(e){}
-if(!/^[a-z0-9]{6,32}$/.test(playerId)){
-  playerId=(Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)+
-            Date.now().toString(36)).replace(/[^a-z0-9]/g,'').slice(0,16);
+/* An id already in storage is kept exactly as it is, whatever format it is in:
+   regenerating one would strand that player's row on the board forever. */
+if(!codeOk(playerId)){
+  playerId=newCode();
   try{localStorage.setItem('vr_pid',playerId);}catch(e){}
 }
 try{playerName=localStorage.getItem('vr_name')||'';}catch(e){}
 
+/* No underscore: the pixel font has no glyph for it, so a name using one
+   drew as a blank gap on the board. The server stays permissive for older
+   clients; this just stops anyone picking an unrenderable name. */
 function cleanName(v){
-  return String(v||'').toUpperCase().replace(/[^A-Z0-9 _.-]/g,'').trim().slice(0,14);
+  return String(v||'').toUpperCase().replace(/[^A-Z0-9 .-]/g,'').trim().slice(0,14);
+}
+/* Taking on an id from another device. The code is accepted even when the
+   board has no row for it yet - a player may be recovering before they ever
+   finished a run - but the name and hull are pulled back when it does. */
+function adoptShip(k){
+  for(var i=0;i<SHIP_THEMES.length;i++)
+    if(SHIP_THEMES[i].k===k){shipTheme=i;
+      try{localStorage.setItem('vr_ship',k);}catch(e){}return true;}
+  return false;
+}
+function applyCode(code){
+  playerId=code;
+  try{localStorage.setItem('vr_pid',code);}catch(e){}
+}
+function recoverFound(rows,code){
+  for(var i=0;i<rows.length;i++)if(rows[i].id===code){
+    if(rows[i].name){playerName=rows[i].name;
+      try{localStorage.setItem('vr_name',playerName);}catch(e){}}
+    adoptShip(rows[i].ship);
+    return rows[i];
+  }
+  return null;
+}
+function lbRecover(code){
+  applyCode(code);
+  if(!canFetch()){codeBusy=false;codeMsg='SAVED - NO CONNECTION TO CHECK';return;}
+  codeBusy=true;codeMsg='CHECKING...';
+  var done=false,t=null;
+  function finish(d){
+    if(done)return;
+    done=true;codeBusy=false;
+    if(t!==null&&typeof clearTimeout==='function')clearTimeout(t);
+    if(d&&d.ok&&d.rows){
+      LB.rows=d.rows;LB.mode='live';
+      var row=recoverFound(d.rows,code);
+      if(row){codeMsg='WELCOME BACK '+row.name;askName=false;
+        if(nameIn){nameIn.blur();nameIn.style.display='none';}}
+      else codeMsg='NO RUNNER WITH THAT CODE YET';
+    } else codeMsg='COULD NOT REACH THE BOARD';
+  }
+  try{
+    if(typeof setTimeout==='function')t=setTimeout(function(){finish(null);},8000);
+    fetch('/api/scores?v='+majorVer(),{method:'GET'})
+      .then(function(r){return r.json();})
+      .then(finish)
+      .catch(function(){finish(null);});
+  }catch(e){finish(null);}
 }
 function majorVer(){
   var m=String(VERSION).replace(/[^0-9.]/g,'').split('.')[0];
@@ -1479,11 +1583,19 @@ var C_GOLD='#ffd34d';
 function lbRowRect(i){return {x:16,y:lbTop()+i*LB_RH,w:W-32,h:LB_RH};}
 
 /* the name card, drawn over the menu */
-function nameCard(){return {x:20,y:Math.round(H*0.30),w:W-40,h:104};}
+/* The code modes carry a line under the field - a status message, or the
+   'do not share it' warning - so the card grows to make room for it rather
+   than letting that line land on top of the buttons. */
+function cardTall(){return promptMode==='code'||promptMode==='show';}
+function nameCard(){return {x:20,y:Math.round(H*0.30),w:W-40,h:cardTall()?122:104};}
 function nameFieldRect(){var c=nameCard();return {x:c.x+14,y:c.y+34,w:c.w-28,h:22};}
+function nameBtnTop(){var c=nameCard();return c.y+(cardTall()?86:68);}
 /* Dismiss sits on the left, confirm on the right. */
-function nameLaterRect(){var c=nameCard();return {x:c.x+14,y:c.y+68,w:Math.round((c.w-38)/2),h:24};}
+function nameLaterRect(){var c=nameCard();
+  return {x:c.x+14,y:nameBtnTop(),w:Math.round((c.w-38)/2),h:24};}
 function nameOkRect(){var c=nameCard(),l=nameLaterRect();
+  /* Showing your own code needs one button, not a choice, so it spans. */
+  if(promptMode==='show')return {x:c.x+14,y:nameBtnTop(),w:c.w-28,h:24};
   return {x:l.x+l.w+10,y:l.y,w:c.w-28-l.w-10,h:24};}
 
 /* one row of the board, shared by the menu and the full screen */
@@ -1548,11 +1660,19 @@ function placeNameInput(){
 }
 if(nameIn){
   nameIn.addEventListener('input',function(){
+    if(promptMode==='code'){
+      /* Keep the dashes the player can see in the field, store the raw code. */
+      nameDraft=cleanCode(nameIn.value);
+      var pretty=codeFmt(nameDraft);
+      if(nameIn.value!==pretty)nameIn.value=pretty;
+      if(codeMsg&&!codeBusy)codeMsg='';
+      return;
+    }
     nameDraft=cleanName(nameIn.value);
     if(nameIn.value!==nameDraft)nameIn.value=nameDraft;
   });
   nameIn.addEventListener('keydown',function(e){
-    if(e.key==='Enter'){e.preventDefault();if(cleanName(nameDraft))closeNamePrompt(true);}
+    if(e.key==='Enter'){e.preventDefault();if(promptReady())closeNamePrompt(true);}
     else if(e.key==='Escape'){e.preventDefault();closeNamePrompt(false);}
   });
 }
@@ -1587,42 +1707,99 @@ function doConfirm(){
 }
 
 /* ================= name card ================= */
+/* Is what is typed good enough for the CONTINUE button to light up? */
+function promptReady(){
+  if(promptMode==='code')return codeOk(cleanCode(nameDraft));
+  return cleanName(nameDraft).length>0;
+}
+function promptTitle(){
+  if(promptMode==='code')return 'ENTER A RECOVERY CODE';
+  if(promptMode==='show')return 'YOUR RECOVERY CODE';
+  return nameEdit?'CHANGE YOUR NAME':'WHO ARE YOU';
+}
+function promptSub(){
+  if(promptMode==='code')return 'TAKES BACK YOUR RUNS AND NAME';
+  if(promptMode==='show')return 'KEEP THIS - IT IS HOW YOU GET BACK IN';
+  return 'YOUR NAME ON THE LEADERBOARD';
+}
 function drawNameCard(){
   ctx.fillStyle='rgba(3,5,12,0.82)';ctx.fillRect(0,0,W,H);
-  var c=nameCard();panel(c,'#4fa3ff');
-  txt(nameEdit?'CHANGE YOUR NAME':'WHO ARE YOU',W/2,c.y+10,'#8fe9ff',true);
-  txt('YOUR NAME ON THE LEADERBOARD',W/2,c.y+22,'#3f6490',true);
-  var f=nameFieldRect();
+  var c=nameCard();panel(c,promptMode==='show'?'#ffd34d':'#4fa3ff');
+  txt(promptTitle(),W/2,c.y+10,promptMode==='show'?'#ffd34d':'#8fe9ff',true);
+  txt(promptSub(),W/2,c.y+22,'#3f6490',true);
+  var f=nameFieldRect(),ty=f.y+Math.round((f.h-FH)/2);
+
+  if(promptMode==='show'){
+    /* Nothing to type: the code is just read off the card. */
+    ctx.fillStyle='#070b16';ctx.fillRect(f.x,f.y,f.w,f.h);
+    ctx.fillStyle='#5e4a0b';
+    ctx.fillRect(f.x,f.y,f.w,1);ctx.fillRect(f.x,f.y+f.h-1,f.w,1);
+    ctx.fillRect(f.x,f.y,1,f.h);ctx.fillRect(f.x+f.w-1,f.y,1,f.h);
+    txt(codeFmt(playerId),W/2,ty,'#ffe066',true);
+    txt('DO NOT SHARE IT',W/2,f.y+f.h+6,'#3f6490',true);
+    var done=nameOkRect();
+    panel(done,'#4fc01f');
+    txt('DONE',done.x+Math.round(done.w/2),
+        done.y+Math.round((done.h-FH)/2),'#b9ffa8',true);
+    return;
+  }
+
   ctx.fillStyle='#070b16';ctx.fillRect(f.x,f.y,f.w,f.h);
   ctx.fillStyle='#24405f';
   ctx.fillRect(f.x,f.y,f.w,1);ctx.fillRect(f.x,f.y+f.h-1,f.w,1);
   ctx.fillRect(f.x,f.y,1,f.h);ctx.fillRect(f.x+f.w-1,f.y,1,f.h);
-  var ty=f.y+Math.round((f.h-FH)/2);
-  if(nameDraft)txt(nameDraft,f.x+7,ty,'#ffffff');
-  else txt('TAP TO TYPE',f.x+7,ty,'#2e3f58');
+  var shown=(promptMode==='code')?codeFmt(cleanCode(nameDraft)):nameDraft;
+  if(shown)txt(shown,f.x+7,ty,'#ffffff');
+  else txt(promptMode==='code'?'TAP TO TYPE THE CODE':'TAP TO TYPE',f.x+7,ty,'#2e3f58');
   if(Math.floor(gameT*2)%2===0){                     /* caret */
     ctx.fillStyle='#8fe9ff';
-    ctx.fillRect(f.x+7+txtW(nameDraft)+(nameDraft?1:0),ty-1,1,FH+2);
+    ctx.fillRect(f.x+7+txtW(shown)+(shown?1:0),ty-1,1,FH+2);
   }
-  var ok=nameOkRect(),later=nameLaterRect(),can=cleanName(nameDraft).length>0;
+  if(promptMode==='code'&&codeMsg)
+    txt(codeMsg,W/2,f.y+f.h+6,codeBusy?'#3f6490':'#ffe066',true);
+  var ok=nameOkRect(),later=nameLaterRect(),can=promptReady();
   panel(later,'#3f6490');
-  txt(nameEdit?'CANCEL':'LATER',later.x+Math.round(later.w/2),
+  txt((promptMode==='code'||nameEdit)?'CANCEL':'LATER',later.x+Math.round(later.w/2),
       later.y+Math.round((later.h-FH)/2),'#9fd8ff',true);
   panel(ok,can?'#4fc01f':'#2b3340');
-  txt('CONTINUE',ok.x+Math.round(ok.w/2),ok.y+Math.round((ok.h-FH)/2),can?'#b9ffa8':'#4a5260',true);
+  txt(promptMode==='code'?'RECOVER':'CONTINUE',ok.x+Math.round(ok.w/2),
+      ok.y+Math.round((ok.h-FH)/2),can?'#b9ffa8':'#4a5260',true);
 }
 function openNamePrompt(edit){
+  promptMode='name';codeMsg='';codeBusy=false;
   askName=true;nameEdit=!!edit;nameDraft=playerName||'';
-  if(nameIn){nameIn.value=nameDraft;placeNameInput();nameIn.style.display='block';
+  if(nameIn){nameIn.value=nameDraft;nameIn.setAttribute('maxlength','14');
+    placeNameInput();nameIn.style.display='block';
     try{nameIn.focus({preventScroll:true});}catch(e){try{nameIn.focus();}catch(e2){}}}
 }
+function openCodePrompt(){
+  promptMode='code';codeMsg='';codeBusy=false;
+  askName=true;nameEdit=true;nameDraft='';
+  /* 32 raw characters plus the dashes the field shows them in. */
+  if(nameIn){nameIn.value='';nameIn.setAttribute('maxlength','40');
+    placeNameInput();nameIn.style.display='block';
+    try{nameIn.focus({preventScroll:true});}catch(e){try{nameIn.focus();}catch(e2){}}}
+}
+function openCodeShow(){
+  promptMode='show';codeMsg='';codeBusy=false;
+  askName=true;nameEdit=true;nameDraft='';
+  if(nameIn){nameIn.blur();nameIn.style.display='none';}
+}
 function closeNamePrompt(save){
-  if(save){
+  if(save&&promptMode==='code'){
+    /* Stays open: the answer comes back from the board a moment later and is
+       drawn on this card, so closing here would hide it. */
+    var c=cleanCode(nameDraft);
+    if(codeOk(c))lbRecover(c);
+    return;
+  }
+  if(save&&promptMode==='name'){
     var n=cleanName(nameDraft);
     if(n){playerName=n;try{localStorage.setItem('vr_name',n);}catch(e){}}
   }
-  askName=false;
-  if(nameIn){nameIn.blur();nameIn.style.display='none';}
+  askName=false;promptMode='name';codeMsg='';codeBusy=false;
+  if(nameIn){nameIn.blur();nameIn.style.display='none';
+    nameIn.setAttribute('maxlength','14');}
 }
 
 /* ================= full leaderboard ================= */
@@ -1704,6 +1881,11 @@ window.addEventListener('keydown',function(e){
   /* A and D steer the ship, so the game used to swallow them before the name
      field ever saw them: typing an A did nothing. While the field is up the
      game takes no keys at all. */
+  if(askName&&promptMode==='show'){
+    var sk=e.key.toLowerCase();
+    if(sk==='escape'||sk==='enter'||sk===' '){e.preventDefault();closeNamePrompt(false);}
+    return;
+  }
   if(askName||(nameIn&&e.target===nameIn))return;
   var k=e.key.toLowerCase();
   if(['arrowleft','arrowright','a','d',' '].indexOf(k)>=0)e.preventDefault();
@@ -1788,6 +1970,29 @@ function inRect(r,x,y){return x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;}
 function down(e){
   e.preventDefault();ac();
   var mx=pxFromEvent(e),my=pyFromEvent(e),i;
+  /* The card is drawn on top of everything, so it must be TESTED against the
+     tap before everything, whatever screen is underneath. Sitting lower down
+     this function, it never saw a tap while the settings page was open: the
+     settings branch claimed it first and fired whichever Profile row happened
+     to be behind the button, so DONE opened the code prompt and CANCEL would
+     not cancel. */
+  if(askName){
+    if(promptMode==='show'){
+      /* One button: read it and dismiss. */
+      if(inRect(nameOkRect(),mx,my)){sfx.pick();closeNamePrompt(false);}
+      return;
+    }
+    if(inRect(nameFieldRect(),mx,my)){
+      if(nameIn){placeNameInput();try{nameIn.focus();}catch(e){}}
+      return;
+    }
+    if(inRect(nameOkRect(),mx,my)){
+      if(promptReady()){sfx.pick();closeNamePrompt(true);}
+      return;
+    }
+    if(inRect(nameLaterRect(),mx,my)){sfx.pick();closeNamePrompt(false);return;}
+    return;
+  }
   if(state===SETTINGS&&confirmAct){
     if(inRect(confirmYes(),mx,my)){sfx.pick();doConfirm();return;}
     if(inRect(confirmNo(),mx,my)){sfx.pick();confirmAct='';return;}
@@ -1827,18 +2032,6 @@ function down(e){
   }
   if(state===LEVELUP){
     for(i=0;i<choices.length;i++){var rc=cardRect(i);if(my>=rc.y&&my<=rc.y+rc.h){applyChoice(i);return;}}
-    return;
-  }
-  if(state===MENU&&askName){
-    if(inRect(nameFieldRect(),mx,my)){
-      if(nameIn){placeNameInput();try{nameIn.focus();}catch(e){}}
-      return;
-    }
-    if(inRect(nameOkRect(),mx,my)){
-      if(cleanName(nameDraft)){sfx.pick();closeNamePrompt(true);}
-      return;
-    }
-    if(inRect(nameLaterRect(),mx,my)){sfx.pick();closeNamePrompt(false);return;}
     return;
   }
   if(state===MENU){
@@ -1925,16 +2118,22 @@ function safestX(){
 }
 /* The boss cannot be traded for a life: ramming it used to clear it off the
    field and hand you the next wave. Contact or a breakthrough ends the run. */
+/* EVERY way a run can end funnels through here. It used to be that only the
+   boss paths posted to the board, so an ordinary death - running out of lives
+   - recorded nothing at all. One funnel means that can't drift apart again. */
+function endRun(reason){
+  overReason=reason||'RUN OVER';
+  if(!testRun&&score>best)best=score;
+  state=OVER;running=false;MUS.stop();
+  lbSubmit(wi+1,score);
+}
 function runOver(reason,explode){
   if(explode){
     burst(ship.x,SHIP_Y+SHIP_H/2,40,'#8fe9ff',2.4);
     burst(ship.x,SHIP_Y+SHIP_H/2,20,'#ff8a2b',1.8);
   }
   sfx.lifeLost();shake=8;lives=0;bullets.length=0;
-  overReason=reason;
-  if(!testRun&&score>best)best=score;
-  state=OVER;running=false;MUS.stop();
-  lbSubmit(wi+1,score);
+  endRun(reason);
 }
 /* Letting something through is now a failure, not just lost points: three
    leaks ends the run exactly like three collisions would. */
@@ -1972,7 +2171,7 @@ function playerDies(cause){
   burst(ship.x,SHIP_Y+SHIP_H/2,18,'#ff8a2b',1.5);
   sfx.lifeLost();shake=7;lives--;
   bullets.length=0;                 /* the field itself stays exactly as it was */
-  if(lives<=0){if(!testRun&&score>best)best=score;overReason=cause||'RUN OVER';state=OVER;MUS.stop();}
+  if(lives<=0){endRun(cause);}
   else{respawnT=1.1;invT=INVULN+1.1;ptr.active=false;   /* stay where you fell */
        spawnT=Math.max(spawnT,1.4);mT=Math.max(mT,2.0);}
 }
@@ -2575,7 +2774,8 @@ function render(){
       txt(MENU_ITEMS[mi][0],W/2,icy-3,MENU_ITEMS[mi][1],true);
     }
     txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
-    if(askName)drawNameCard();
+    /* Dimmer than the name above it, so it reads as a footnote. */
+    txt(VERSION,W/2,H-13,'#2e3f58',true);
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
@@ -2597,6 +2797,12 @@ function render(){
       'SPACE / TAP FOR THE MENU'],'#4fc01f');
   }
   ctx.restore();
+  /* Drawn last and outside the screen-shake transform, over whatever screen is
+     underneath. Opening it from Profile used to drop you to the menu first,
+     which quietly threw away the run you were paused in the middle of. A modal
+     also should not wobble, and the real input is positioned against
+     untranslated canvas coordinates. */
+  if(askName)drawNameCard();
 }
 
 /* ================= loop ================= */
