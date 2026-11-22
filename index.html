@@ -542,7 +542,13 @@ var SHIP_THEMES=[
   {k:'YELLOW',A:'#fff3a8',B:'#e8c021',C:'#5e4a0b'},
   {k:'BLUE',  A:'#8fe9ff',B:'#2b7fe0',C:'#13325e'},
   {k:'RED',   A:'#ffb3b3',B:'#e03b3b',C:'#5e1313'},
-  {k:'GREEN', A:'#b9ffa8',B:'#3fbf3f',C:'#15431a'},
+  /* Green was the brightest hull of the six by a clear margin - its body
+     read 138 against 108-113 for blue, red and purple - so the whole
+     palette is scaled down 12%, keeping its own highlight-to-body
+     contrast exactly as it was rather than redesigning it. The menu
+     button, the leaderboard rows and the swatch all read B, so they
+     follow on their own. */
+  {k:'GREEN', A:'#a3e094',B:'#37a837',C:'#123b17'},
   {k:'ORANGE',A:'#ffd1a3',B:'#ef8420',C:'#5e3309'},
   {k:'PURPLE',A:'#e6b3ff',B:'#9b3fe0',C:'#3d1160'}
 ];
@@ -885,7 +891,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.81';
+var VERSION='V1.85';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -960,18 +966,19 @@ var UPGRADES=[
   {id:'crit',  name:'CRIT CHANCE',kind:'add',vals:[3,5,9,15],  w:8},
   {id:'critd', name:'CRIT DAMAGE',kind:'mult',vals:[10,18,28,45],w:8},
   {id:'xp',    name:'XP GAIN',    kind:'mult',vals:[10,20,32,50],w:9},
-  /* these two are fixed-rarity by design: a shield is always rare, a heart
-     always ultra rare, so neither can be farmed cheaply */
-  {id:'shield',name:'SHIELD',    kind:'once',fixed:1,w:6},
-  {id:'life',  name:'EXTRA LIFE',kind:'once',fixed:2,w:3}
+  /* fixed-rarity by design: a shield is always rare, so it cannot be farmed
+     cheaply. Hearts are NOT on the table at all - a boss is the only way to
+     get one, which keeps repair somewhere the player earns it rather than
+     somewhere luck can hand it over. */
+  {id:'shield',name:'SHIELD',    kind:'once',fixed:1,w:6}
 ];
 function upById(id){
   for(var i=0;i<UPGRADES.length;i++)if(UPGRADES[i].id===id)return UPGRADES[i];
   return null;
 }
 /* Dealing 3 cards from a 5-option pool meant a low weight gated almost
-   nothing, so these two now roll their own odds for a slot. */
-var P_SHIELD=0.25, P_LIFE=0.08;
+   nothing, so the shield rolls its own odds for a slot. */
+var P_SHIELD=0.25;
 /* Luck drains weight out of COMMON and pushes it up the tiers. At 0% this is
    exactly 75/20/4.5/0.5.
    It used to stop meaning much past about 90%: the common drain was capped,
@@ -1315,7 +1322,7 @@ function fromMenu(){return setBack===MENU;}
    worth touching mid-run, which also buys back the room the HUD now needs. */
 function pageRows(){
   if(fromMenu())
-    return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['SPACESHIP',''],['BACK','']];
+    return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
   return [['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN',''],['RESUME','']];
 }
 /* setPage 3: the switches that change how the game itself plays */
@@ -1370,7 +1377,6 @@ function activateRow(i){
   if(label==='PROFILE')setPage=4;
   else if(label==='SOUND')setPage=2;
   else if(label==='GAMEPLAY')setPage=3;
-  else if(label==='SPACESHIP')setPage=1;
   else if(label==='MAIN MENU')askConfirm('menu');
   else if(label==='RESTART RUN')askConfirm('restart');
   else closeSettings();                       /* BACK and RESUME */
@@ -1382,7 +1388,6 @@ function shuffle(a){
 function openLevelUp(){
   var list=[],i;
   if(!shield&&Math.random()<P_SHIELD)list.push(upById('shield'));
-  if(hp<MAX_HP&&Math.random()<P_LIFE)list.push(upById('life'));
   var stats=[upById('fire'),upById('dmg'),upById('luck'),upById('crit'),upById('xp')];
   if(upCrit>0)stats.push(upById('critd'));   /* useless until you can crit */
   list=list.concat(shuffle(stats)).slice(0,CARDS);
@@ -1402,7 +1407,6 @@ function grantUpgrade(u,r){
     else if(u.id==='xp')upXp+=v;else upCritD+=v;}
   else if(u.kind==='add'){if(u.id==='luck')upLuck+=u.vals[r];else upCrit+=u.vals[r];}
   else if(u.id==='shield')shield=true;
-  else if(u.id==='life')hp=Math.min(MAX_HP,hp+SEG);   /* a whole heart */
 }
 /* Auto levelling takes the best card on the table: highest rarity first, then
    the biggest number on it, and a coin toss between genuine ties. A shield or
@@ -2121,11 +2125,10 @@ function drawShipMark(x,y,k){
    y, so a tall phone gives the title room to breathe instead of pinning it to
    the top edge, and a short canvas still fits. */
 function menuTop(){return Math.round(H*0.045);}
-/* The strapline belongs with the board, not with the title, so it hangs well
-   below the name and the whole group travels together. */
-function menuSubY(){return menuTop()+21+Math.round(H*0.040);}
+/* There used to be a strapline here. With it gone the board moves up to close
+   the gap rather than leaving a hole where the text was. */
 var LB_ROWS=5,LB_RH=20;
-function lbTop(){return menuSubY()+48;}
+function lbTop(){return menuTop()+21+Math.round(H*0.040)+26;}
 function menuStackEnd(){var p=lbPanel();return p.y+p.h+14;}
 function lbPanel(){return {x:12,y:lbTop()-10,w:W-24,h:LB_ROWS*LB_RH+14};}
 var C_GOLD='#ffd34d';
@@ -2188,11 +2191,28 @@ function drawBoardBlock(){
   else hint='TAP FOR THE FULL BOARD';
   txt(hint,W/2,p.y+p.h+5,'#2e3f58',true);
 }
-var MENU_ITEMS=[['NEW RUN','#4fc01f'],['DEMO MODE','#4fa3ff'],['SETTINGS','#c86bff']];
+/* NEW RUN takes the title's own blue so the top of the menu reads as one
+   piece. DEMO MODE is orange, but a lighter amber than the ORANGE hull's
+   #ef8420 on purpose: SPACESHIP is painted in the chosen hull colour and sits
+   directly above DEMO MODE, so the hull orange here made two adjacent buttons
+   identical and looked like a mistake. SPACESHIP's value below is only a
+   fallback - the draw always overrides it with the hull. */
+var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#ffe066'],
+                ['DEMO MODE','#ff9a2e'],['SETTINGS','#c86bff']];
+/* Four buttons do not fit a 256x384 canvas at the old fixed 34+11, and the
+   old code just overflowed - the bottom one landed on the footer. So the gap
+   closes first, then the buttons themselves shrink, both to a floor that
+   stays comfortably tappable. Roomy screens are unchanged. */
 function menuRect(i){
-  var h=34,gap=11,n=MENU_ITEMS.length,tot=n*h+(n-1)*gap;
-  var lo=menuStackEnd()+8,hi=H-46;   /* leaves the footer clear */
-  var top=(hi-lo>tot)?lo+Math.round((hi-lo-tot)/2):lo;
+  var n=MENU_ITEMS.length,h=34,gap=11;
+  var lo=menuStackEnd()+8,hi=H-46,avail=hi-lo;   /* leaves the footer clear */
+  if(n*h+(n-1)*gap>avail){
+    gap=Math.max(5,Math.floor((avail-n*h)/(n-1)));
+    if(n*h+(n-1)*gap>avail)
+      h=Math.max(26,Math.floor((avail-(n-1)*gap)/n));
+  }
+  var tot=n*h+(n-1)*gap;
+  var top=lo+Math.max(0,Math.round((avail-tot)/2));
   return {x:30,y:top+i*(h+gap),w:W-60,h:h};
 }
 function menuGapTop(){return menuStackEnd()+8;}
@@ -2212,9 +2232,12 @@ function toMenu(){
   bannerT=0;alarmT=0;shake=0;
 }
 function menuPick(i){
+  if(i<0||i>=MENU_ITEMS.length)return;
+  var lab=MENU_ITEMS[i][0];
   sfx.pick();
-  if(i===0){testRun=false;reset();}
-  else if(i===1){state=PICK;pickBuf='';}
+  if(lab==='NEW RUN'){testRun=false;reset();}
+  else if(lab==='DEMO MODE'){state=PICK;pickBuf='';}
+  else if(lab==='SPACESHIP'){state=SETTINGS;setPage=1;setBack=MENU;}
   else{state=SETTINGS;setPage=0;setBack=MENU;}
 }
 
@@ -2578,8 +2601,7 @@ function cardDetail(c){
   if(u.id==='crit')return upCrit+'% \u2192 '+(upCrit+v)+'%  CRIT';
   if(u.id==='critd')return upCritD.toFixed(2)+'x \u2192 '+(upCritD+v/100).toFixed(2)+'x  CRIT DMG';
   if(u.id==='xp')   return upXp.toFixed(2)+'x \u2192 '+(upXp+v/100).toFixed(2)+'x  XP GAIN';
-  if(u.id==='shield')return 'ABSORBS ONE HIT';
-  return '+1 HEART   (MAX '+MAX_LIVES+')';
+  return 'ABSORBS ONE HIT';                 /* the only 'once' card left */
 }
 function inRect(r,x,y){return x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;}
 function down(e){
@@ -2614,11 +2636,22 @@ function down(e){
     return;
   }
   if(state===SETTINGS){
-    if(inRect(GEAR,mx,my)){dragChan=-1;if(setPage)setPage=0;else closeSettings();return;}
+    if(inRect(GEAR,mx,my)){dragChan=-1;
+      if(setPage===1&&fromMenu())closeSettings();
+      else if(setPage)setPage=0;
+      else closeSettings();
+      return;}
     if(setPage===1){
+      /* Reached from the menu rather than from settings, so picking a colour
+         or backing out returns to the menu instead of dropping the player into
+         a settings page they never opened. */
       for(i=0;i<SHIP_THEMES.length;i++)
-        if(inRect(swatchRect(i),mx,my)){setShipTheme(i);sfx.pick();setPage=0;return;}
-      if(inRect(backRect(),mx,my))setPage=0;
+        if(inRect(swatchRect(i),mx,my)){
+          setShipTheme(i);sfx.pick();
+          if(fromMenu())closeSettings();else setPage=0;
+          return;
+        }
+      if(inRect(backRect(),mx,my)){if(fromMenu())closeSettings();else setPage=0;}
       return;
     }
     if(setPage===4){
@@ -2737,9 +2770,13 @@ function killAlien(a,i){
    This replaces the old bonus for merely arriving at a boss wave. */
 function bossBounty(){
   var was=hp;
-  hp=(hp<START_HP)?START_HP:Math.min(MAX_HP,hp+SEG);
+  /* Below three hearts you are put back to exactly three. At three or above
+     the hull is rounded UP to the next whole heart, so a chipped 3.25 becomes
+     a clean 4 rather than a chipped 4.25 - the bounty always leaves you on a
+     whole number of hearts. Five is the cap. */
+  hp=(hp<START_HP)?START_HP:Math.min(MAX_HP,(Math.floor(hp/SEG)+1)*SEG);
   if(hp>was){
-    banner=(was<START_HP)?'HULL RESTORED':'+1 HEART';
+    banner=(was<START_HP)?'HULL RESTORED':'HULL PATCHED';
     bannerT=1.9;sfx.lifeGain();
     for(var i=0;i<14;i++)burst(ship.x+(Math.random()*40-20),SHIP_Y,2,'#ff4d6d',1.3);
   }
@@ -3585,17 +3622,21 @@ function render(){
   if(state===BOARD)drawBoard();
   if(state===MENU){
     txtBigOut('VOID RUNNER',W/2,menuTop(),'#8fe9ff','#7a2fc4',3);
-    txt('100 WAVES   /   ONE RUN',W/2,menuSubY(),'#3f6490',true);
     drawBoardBlock();
     for(var mi=0;mi<MENU_ITEMS.length;mi++){
-      var mr=menuRect(mi),mc=MENU_ITEMS[mi][1];
+      var mr=menuRect(mi),mlab=MENU_ITEMS[mi][0];
+      /* the hull button wears the colour you picked, so the menu itself shows
+         which ship you are about to fly */
+      var mc=(mlab==='SPACESHIP')?SHIP_THEMES[shipTheme].B:MENU_ITEMS[mi][1];
       panel(mr,mc);
       ctx.fillStyle=mc;ctx.fillRect(mr.x,mr.y,4,mr.h);
       var icy=mr.y+Math.round(mr.h/2);
-      if(mi===0)drawIcon(IC_PLAY,mr.x+14,icy-4,mc);
-      else if(mi===1)drawIcon(IC_EYE,mr.x+14,icy-3,mc);
+      if(mlab==='NEW RUN')drawIcon(IC_PLAY,mr.x+14,icy-4,mc);
+      else if(mlab==='DEMO MODE')drawIcon(IC_EYE,mr.x+14,icy-3,mc);
+      else if(mlab==='SPACESHIP')
+        ctx.drawImage(SHIP_THEMES[shipTheme].icon,mr.x+11,icy-8);
       else drawGear(mc,mr.x+19,icy);
-      txt(MENU_ITEMS[mi][0],W/2,icy-3,MENU_ITEMS[mi][1],true);
+      txt(mlab,W/2,icy-3,mc,true);
     }
     txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
     /* Dimmer than the name above it, so it reads as a footnote. */
