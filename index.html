@@ -609,6 +609,83 @@ var ROSTER=[
 ];
 var TIER_DECAY=0.62, TIER_FLOOR=0.10, TIER_INTRO=0.30;
 function tierOf(wave){return Math.floor((wave-1)/10);}
+
+/* ================= insanity mode =================
+   Past wave 100 the roster has nothing new left to unlock, and every dial
+   that carried waves 1-100 is already pinned: enemies per wave caps at 21,
+   on-screen count at 20, speed at 54, and the spawn gap bottoms out at 30
+   and then LOOSENS - so simply letting the waves keep counting would hand
+   the player a flat plateau that nothing can kill them on.
+
+   So insanity carries the escalation itself, on four axes that all start
+   from exactly their wave-100 value (nothing jumps on the handover):
+     - health climbs geometrically instead of linearly
+     - the spawn gap tightens instead of loosening
+     - concurrency and speed creep past their old ceilings
+     - every alien carries affixes, more of them and stronger with depth
+   The mix is FROZEN at its wave-100 shape and pushed further toward the deep
+   roster, because the old tier decay would have let scouts drift back to a
+   fifth of the wave by 300.
+
+   Tuned against a measured model of player power: damage output grows about
+   5.6% a wave early in insanity, decaying to ~2% by 200. 1.05 a wave on
+   health is the slowest rate that still out-runs that the whole way, so the
+   difficulty trend never once eases off. */
+var INS_HP=1.050,        /* health multiplier, per wave past 100 */
+    INS_GAP=0.9955,      /* spawn gap shrinks by this each wave */
+    INS_GAPMIN=0.16,
+    INS_CONC_EVERY=28,   /* one more alien allowed on screen every N waves */
+    INS_CONC_MAX=15,
+    INS_SPD=1.0018, INS_SPD_MAX=3.9,
+    INS_AFF_EVERY=14,    /* one more affix per alien every N waves */
+    INS_AFF_MAX=5,
+    INS_AFF_STR=0.010,   /* affixes get this much stronger per wave */
+    INS_BIAS=0.022,      /* push the mix toward the deep roster */
+    INS_BIAS_RAMP=70;
+function insDepth(wave){return Math.max(0,wave-MAXWAVE);}
+/* The wave-100 weights, computed once. Freezing them is what stops the mix
+   sliding back toward scouts the deeper the run goes. */
+var _insW=null;
+function insWeights(wave){
+  if(!_insW)_insW=rosterWeights(MAXWAVE);
+  var t=insDepth(wave),ramp=Math.min(1,t/INS_BIAS_RAMP),out=[],i;
+  for(i=0;i<_insW.length;i++)
+    out.push({k:_insW[i].k,w:_insW[i].w*Math.pow(1+INS_BIAS,i*ramp)});
+  return out;
+}
+function insAffixCount(wave){
+  return Math.min(INS_AFF_MAX,1+Math.floor(insDepth(wave)/INS_AFF_EVERY));
+}
+function insAffixPower(wave){return 1+INS_AFF_STR*insDepth(wave);}
+/* The five affixes. Each is defined RELATIVE to the alien's own numbers, which
+   is what lets one table stay meaningful from wave 101 to wave 300. Armour in
+   particular is a percentage, not a flat subtraction: a flat number is
+   worthless against a wave-150 build and total immunity against a weak one. */
+var AFFIX=[
+  {k:'ARMOURED', c:'#8fa8c8'},   /* shrugs off a fraction of every hit */
+  {k:'SWIFT',    c:'#ffd34d'},   /* arrives faster */
+  {k:'SHIELDED', c:'#4fe3ff'},   /* an absorb pool over its health */
+  {k:'SPLITTING',c:'#6bff8f'},   /* breaks into mites when killed */
+  {k:'REGEN',    c:'#ff6b9a'}    /* heals whenever it is left alone */
+];
+function rollAffixes(t){
+  var o={list:[],drp:0,regen:0,splits:0,sh:0,swift:1};
+  if(!curw||!curw.ins)return o;
+  var n=curw.aff,p=curw.affp,pool=[0,1,2,3,4],i,k;
+  /* A boss stays recognisably itself: one affix, and never SPLITTING, because
+     a boss shedding mites on death reads as a bug rather than a threat. */
+  if(t.boss){n=1;pool=[0,1,2,4];}
+  for(i=0;i<n&&pool.length;i++){
+    k=pool.splice(Math.floor(Math.random()*pool.length),1)[0];
+    o.list.push(k);
+    if(k===0)o.drp=Math.min(0.60,0.18*p);
+    else if(k===1)o.swift*=1+0.12*p;
+    else if(k===2)o.sh+=t.hp*curw.hp*0.45*p;
+    else if(k===3)o.splits=2;
+    else o.regen+=0.030*p;
+  }
+  return o;
+}
 function rosterWeights(wave){
   var out=[],i,r,since,w,into;
   for(i=0;i<ROSTER.length;i++){
@@ -735,7 +812,13 @@ var ROCKS=[
   {r:13,spd:62*VS, spin:0.8,weight:1.3,hp:200,xp:60,blast:60}
 ];
 var ROT=10;
-for(var ri=0;ri<ROCKS.length;ri++){
+/* Meteors are out of the game for now. The subsystem below is left intact
+   but never fed: no plan, no spawns, no setting. Flipping this to true is all
+   it takes to bring them back, so nothing had to be torn out of collision,
+   drawing or the spawn-fairness guard. The sprite build is skipped too - it
+   was 240 rasterisations at boot for sprites nothing would draw. */
+var METEORS_ON=false;
+for(var ri=0;METEORS_ON&&ri<ROCKS.length;ri++){
   ROCKS[ri].shapes=[];
   ROCKS[ri].lit=[];
   for(var si=0;si<3;si++){
@@ -750,11 +833,42 @@ for(var rw=0;rw<ROCKS.length;rw++)ROCK_TOTAL+=ROCKS[rw].weight;
 /* ================= player / weapon ================= */
 var DMG=10,FIRE_RATE=8,BULLET_SPD=Math.round(270*VS);
 var SHIP_SPD=360,SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=5,INVULN=2.0;
+/* ===== hull =====
+   Hearts are four segments each, and the hull is counted in segments, so the
+   roster's weight range finally shows up in what a touch costs you: a mite
+   clipping your wing and a colossus flattening you used to be identical.
+   Three hearts is twelve segments; the cap is five hearts, twenty. */
+var SEG=4,START_HP=START_LIVES*SEG,MAX_HP=MAX_LIVES*SEG;
+var HULL_DMG={mite:1,scout:2,phantom:2,drone:3,splitter:3,diver:3,knitter:3,
+              brute:4,bulwark:4,carapace:4,colossus:6};
+/* One instance this big buys the full setback: the formation shoved back and a
+   long look at an empty screen. Four mites still cost four segments between
+   them and buy nothing, because the rule is per touch, not cumulative. */
+var SETBACK_AT=4;
+/* Contact is gated on invT, so without a mercy window on small hits you would
+   take one touch PER FRAME - sixty segments a second, dead in a fifth of a
+   second against a crowd of mites. Chip damage gets a brief window and
+   nothing else: no push-back, no respawn, so it can never be used as a way
+   out of a bad screen the way a real death can. */
+var CHIP_INVULN=0.6;
+function hullDmg(t){
+  if(!t)return SEG;
+  var d=HULL_DMG[t.key];
+  return (d===undefined)?SEG:d;        /* anything unlisted costs a whole heart */
+}
+function hearts(){return Math.ceil(hp/SEG);}
 /* A card screen can land with a rock already on top of you, and the time
    spent reading three cards is time you could not spend dodging. Half a
    second back on the other side is enough to move out of the way and not
    enough to walk through anything. */
 var LVL_INVULN=0.5;
+/* A card screen opens on top of wherever the player's thumb already is. The
+   ship sits at y472 and the third card's band is y447-499, so the hand that
+   was dragging to dodge is ALREADY inside a card: the next touch - the natural
+   one, right where the thumb is - picked that card instantly, and with two or
+   three levels banked each re-touch took the next one. The cards were never
+   read, let alone chosen. So a new card screen ignores input for a moment. */
+var LVL_LOCK=0.28,lvlLock=0;
 /* The spawn fairness guard keeps the OLD 240 budget on purpose: the faster keys
    are a pure buff, not an excuse to spawn tighter patterns. */
 var GUARD_SPD=240;
@@ -763,16 +877,15 @@ var LINE_Y=SHIP_Y+SHIP_H/2;   /* the line every meteor must cross */
    what the fairness guard reasons about, so move-speed upgrades buy real slack
    instead of licensing the spawner to place tighter gaps. */
 var upFire=1,upDmg=1,upLuck=0,upCrit=0,upCritD=1.1,upXp=1,shield=false;
-var dmgNumbers=true,meteorsOn=true,autoLevel=false;
+var dmgNumbers=true,autoLevel=false;
 try{var _dn=localStorage.getItem('vr_dmgnum');if(_dn!==null)dmgNumbers=(_dn==='1');}catch(e){}
-try{var _mt=localStorage.getItem('vr_meteors');if(_mt!==null)meteorsOn=(_mt==='1');}catch(e){}
 try{var _al=localStorage.getItem('vr_auto');if(_al!==null)autoLevel=(_al==='1');}catch(e){}
 function fireGap(){return 1/(FIRE_RATE*upFire);}
 function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.77';
+var VERSION='V1.81';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -784,7 +897,7 @@ function waveDef(w){
      weighted so the newest arrivals dominate and the old guard thins out
      without ever disappearing. Difficulty comes from WHAT is on screen
      rather than simply more of it. */
-  var ws=rosterWeights(wave),tot=0,i,mix={};
+  var ws=(wave>MAXWAVE?insWeights(wave):rosterWeights(wave)),tot=0,i,mix={};
   for(i=0;i<ws.length;i++)tot+=ws[i].w;
   var left=total,acc=0;
   for(i=0;i<ws.length;i++){
@@ -796,7 +909,23 @@ function waveDef(w){
   }
   /* waves 1-10 must never be empty of the only two kinds they have */
   if(!boss&&(mix.scout||0)+(mix.drone||0)===0&&total>0){mix.scout=1;}
-  return {mix:mix,boss:boss,total:total,
+  /* Insanity takes over the dials past wave 100. Each one is anchored to its
+     own wave-100 value computed from the formulas below, so retuning the
+     1-100 curve carries straight through to the handover. */
+  var ind=insDepth(wave);
+  if(ind>0){
+    var hp100=1+(MAXWAVE-1)*0.07,
+        gap100=Math.max(0.26+0.020*tierOf(MAXWAVE),1.60*Math.pow(0.945,MAXWAVE-1)),
+        conc100=Math.min(9,2+Math.floor((MAXWAVE-1)/2.0)),
+        spd100=Math.min(2.6,1+(MAXWAVE-1)*0.030);
+    return {mix:mix,boss:boss,total:total,ins:ind,
+      aff:insAffixCount(wave),affp:insAffixPower(wave),
+      conc:Math.min(INS_CONC_MAX,conc100+Math.floor(ind/INS_CONC_EVERY))+(boss?2:0),
+      gap:Math.max(INS_GAPMIN,gap100*Math.pow(INS_GAP,ind)),
+      hp:hp100*Math.pow(INS_HP,ind),
+      spd:Math.min(INS_SPD_MAX,spd100*Math.pow(INS_SPD,ind))};
+  }
+  return {mix:mix,boss:boss,total:total,ins:0,aff:0,affp:1,
     conc:Math.min(9,2+Math.floor(w/2.0))+(boss?2:0),
     /* Late enemies are individually far tougher, so the same 0.26s burst
        that worked against scouts buries you against a roster of heavies.
@@ -811,7 +940,7 @@ function waveDef(w){
     spd:Math.min(2.6,1+w*0.030)};
 }
 function meteorPlan(w){
-  if(!meteorsOn)return null;
+  if(!METEORS_ON)return null;
   if(w<1)return null;
   /* Fixed for the whole run: the rocks are a constant background hazard, and
      the escalation is carried by the aliens instead. */
@@ -1096,7 +1225,7 @@ var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7;
 var state=MENU;
 var ship,aliens,bullets,rocks,parts,queue,wi,curw,conc,gap,spawnT,mplan,mT,blockT;
 var level,xp,xpNeed,pendLv,choices;
-var score,lives,leaked,kills,shots,hits,dodged,broken,gameT;
+var score,hp,leaked,kills,shots,hits,dodged,broken,gameT;
 var shocks=[];
 var alarmT,overReason='';
 var lvlFlash=0,running=false;
@@ -1169,12 +1298,6 @@ function swatchRect(i){
   var top=Math.max(84,Math.round((H-56-tot)/2));
   return {x:24+(i%3)*72,y:top+Math.floor(i/3)*56,w:60,h:46};
 }
-function setMeteors(on){
-  meteorsOn=on;sfx.pick();
-  try{localStorage.setItem('vr_meteors',on?'1':'0');}catch(e){}
-  mplan=meteorPlan(wi);                 /* takes effect in the current wave */
-  if(!on)rocks.length=0;                /* and clears whatever is in flight */
-}
 /* Closing settings has to go back where it came from. Returning to PLAY from
    the menu dropped the player into a live run with an empty field, and the
    wave-clear check then fired instantly and skipped them to wave 2. */
@@ -1198,7 +1321,6 @@ function pageRows(){
 /* setPage 3: the switches that change how the game itself plays */
 function gpRows(){
   return [['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
-          ['METEORS',meteorsOn?'ON':'OFF'],
           ['AUTO LEVEL',autoLevel?'ON':'OFF']];
 }
 /* setPage 4: who you are, and how to prove it on another phone. */
@@ -1225,11 +1347,16 @@ function gpRect(i){
   var top=Math.max(80,Math.round((H-56-tot)/2));
   return {x:22,y:top+i*(h+gap),w:212,h:h};
 }
+/* Dispatched on the row's LABEL. Dropping the METEORS row shifted every index
+   below it, which is exactly how an index-based switch fires the wrong
+   setting - the same trap activateRow was already rewritten to avoid. */
 function gpActivate(i){
-  if(i===0){dmgNumbers=!dmgNumbers;sfx.pick();
+  var rows=gpRows();
+  if(i<0||i>=rows.length)return;
+  var lab=rows[i][0];
+  if(lab==='DAMAGE NUMBERS'){dmgNumbers=!dmgNumbers;sfx.pick();
     try{localStorage.setItem('vr_dmgnum',dmgNumbers?'1':'0');}catch(e){}}
-  else if(i===1){setMeteors(!meteorsOn);}
-  else if(i===2){autoLevel=!autoLevel;sfx.pick();
+  else if(lab==='AUTO LEVEL'){autoLevel=!autoLevel;sfx.pick();
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
 }
 /* Dispatched on the row's label, not its position. The list differs between
@@ -1255,7 +1382,7 @@ function shuffle(a){
 function openLevelUp(){
   var list=[],i;
   if(!shield&&Math.random()<P_SHIELD)list.push(upById('shield'));
-  if(lives<MAX_LIVES&&Math.random()<P_LIFE)list.push(upById('life'));
+  if(hp<MAX_HP&&Math.random()<P_LIFE)list.push(upById('life'));
   var stats=[upById('fire'),upById('dmg'),upById('luck'),upById('crit'),upById('xp')];
   if(upCrit>0)stats.push(upById('critd'));   /* useless until you can crit */
   list=list.concat(shuffle(stats)).slice(0,CARDS);
@@ -1264,7 +1391,10 @@ function openLevelUp(){
   for(i=0;i<list.length;i++)
     picked.push({u:list[i],r:(list[i].kind==='once')?list[i].fixed:rollRarity()});
   choices=picked;state=LEVELUP;sfx.level();lvlFlash=0.75;
-  if(autoLevel){applyChoice(autoPick());return;}
+  /* Auto levelling reads the card for you and must not be held up by the lock,
+     so it picks before the lock is armed. */
+  if(autoLevel){applyChoice(autoPick(),true);return;}
+  lvlLock=LVL_LOCK;
 }
 function grantUpgrade(u,r){
   if(u.kind==='mult'){var v=u.vals[r]/100;
@@ -1272,7 +1402,7 @@ function grantUpgrade(u,r){
     else if(u.id==='xp')upXp+=v;else upCritD+=v;}
   else if(u.kind==='add'){if(u.id==='luck')upLuck+=u.vals[r];else upCrit+=u.vals[r];}
   else if(u.id==='shield')shield=true;
-  else if(u.id==='life')lives=Math.min(MAX_LIVES,lives+1);
+  else if(u.id==='life')hp=Math.min(MAX_HP,hp+SEG);   /* a whole heart */
 }
 /* Auto levelling takes the best card on the table: highest rarity first, then
    the biggest number on it, and a coin toss between genuine ties. A shield or
@@ -1288,15 +1418,18 @@ function autoPick(){
   }
   return tied[Math.floor(Math.random()*tied.length)];
 }
-function applyChoice(i){
-  if(state!==LEVELUP||!choices||!choices[i])return;
+function applyChoice(i,force){
+  if(state!==LEVELUP||!choices||!choices[i])return false;
+  /* Still settling: a touch that was already on its way cannot pick a card. */
+  if(lvlLock>0&&!force)return false;
   var c=choices[i];
   grantUpgrade(c.u,c.r);
   /* Not while auto levelling: that reads the card for you in no time at all,
      and at high luck it fires often enough that the grace would be permanent. */
   if(!autoLevel){invT=Math.max(invT,LVL_INVULN);lvlInvT=LVL_INVULN;}
   pendLv--;choices=null;sfx.pick();
-  if(pendLv>0)openLevelUp();else state=PLAY;
+  if(pendLv>0)openLevelUp();else{state=PLAY;lvlLock=0;}
+  return true;
 }
 
 /* ---- practice jump ----
@@ -1321,7 +1454,7 @@ function jumpToWave(n){
   }
   xp=0;xpNeed=xpForLevel(level);pendLv=0;choices=null;
   startWave(n-1);
-  lives=START_LIVES;shield=false;            /* no freebies for skipping ahead */
+  hp=START_HP;shield=false;                  /* no freebies for skipping ahead */
   testRun=true;startedAt=n;  /* reset() cleared it, set it back */
   state=PLAY;MUS.start();
 }
@@ -1352,7 +1485,7 @@ function startWave(n){
 function reset(){
   ship={x:W/2};
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];
-  score=0;lives=START_LIVES;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
+  score=0;hp=START_HP;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
   alarmT=0;dnums=[];overReason='';lvlFlash=0;
   fireT=0;shake=0;invT=INVULN;lvlInvT=0;respawnT=0;blockT=0;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
@@ -1511,7 +1644,11 @@ function spawnAlien(force){
     if(alt<0)return false;            /* everything left is at its cap: wait */
     qi=alt;
   }
-  var t=(queue[qi]==='boss')?bossFor(wi):TYPES[queue[qi]],i,spd=t.spd*curw.spd,sy0=-t.h-2;
+  var t=(queue[qi]==='boss')?bossFor(wi):TYPES[queue[qi]],i;
+  /* Rolled BEFORE the lane search below. SWIFT changes how fast this thing
+     arrives and the fairness guard reasons about arrival time, so rolling
+     affixes afterwards would quietly hand the player undodgeable spawns. */
+  var afx=rollAffixes(t),spd=t.spd*curw.spd*afx.swift,sy0=-t.h-2;
   if(spacedKind(t))sy0=bruteSpawnY(t,sy0);
   /* a diver ends up far faster than it starts, so the fairness guard has to
      reason about the speed it will actually arrive at, not its opening crawl */
@@ -1545,10 +1682,11 @@ function spawnAlien(force){
   queue.splice(qi,1);
   var x=laneX(lane)+Math.round((Math.random()*2-1)*5),half=t.w/2;
   x=Math.max(half+2,Math.min(W-half-2,x));
-  var hp=t.hp*curw.hp;
+  var hp=t.hp*curw.hp,sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
   aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
-    sh:t.shield?t.shield*curw.hp:0,shmax:t.shield?t.shield*curw.hp:0,
+    sh:sh0,shmax:sh0,
     quiet:0,ph:0,solid:true,
+    afx:afx.list,drp:afx.drp,regen:afx.regen,splits:afx.splits,
     bites:makeAlienBites(t,5+Math.floor(t.w/8))});
   return true;
 }
@@ -2058,6 +2196,15 @@ function menuRect(i){
   return {x:30,y:top+i*(h+gap),w:W-60,h:h};
 }
 function menuGapTop(){return menuStackEnd()+8;}
+/* The wave-100 gate. One tap and the run carries on into insanity; the 100 is
+   already banked, so there is nothing to lose by going through. */
+function enterInsanity(){
+  if(state!==WIN)return false;
+  state=PLAY;MUS.start();
+  startWave(MAXWAVE);          /* zero-based, so this is wave 101 */
+  banner='INSANITY';bannerT=2.4;
+  return true;
+}
 function toMenu(){
   state=MENU;setPage=0;pickBuf='';running=false;confirmAct='';MUS.stop();
   lbLoad(BOARD_ERA);                /* the menu is always the live board */
@@ -2396,7 +2543,8 @@ window.addEventListener('keydown',function(e){
   }
   if((k==='p'||k==='escape')&&state===PLAY){openSettings();return;}
   if(state===LEVELUP&&k>='1'&&k<='9'&&+k<=UPGRADES.length){applyChoice(+k-1);return;}
-  if((k===' '||k==='enter')&&(state===OVER||state===WIN)){ac();toMenu();}
+  if((k===' '||k==='enter')&&state===WIN){ac();enterInsanity();return;}
+  if((k===' '||k==='enter')&&state===OVER){ac();toMenu();}
 });
 window.addEventListener('keyup',function(e){keys[e.key.toLowerCase()]=false;});
 function pxFromEvent(e){
@@ -2498,7 +2646,8 @@ function down(e){
     return;
   }
   if(state===LEVELUP){
-    for(i=0;i<choices.length;i++){var rc=cardRect(i);if(my>=rc.y&&my<=rc.y+rc.h){applyChoice(i);return;}}
+    for(i=0;i<choices.length;i++){var rc=cardRect(i);
+      if(my>=rc.y&&my<=rc.y+rc.h&&mx>=rc.x&&mx<=rc.x+rc.w){applyChoice(i);return;}}
     return;
   }
   if(state===MENU){
@@ -2528,7 +2677,8 @@ function down(e){
     return;
   }
   if(state===PLAY&&inRect(GEAR,mx,my)){openSettings();return;}
-  if(state===OVER||state===WIN){toMenu();return;}
+  if(state===WIN){enterInsanity();return;}
+  if(state===OVER){toMenu();return;}
   if(state!==PLAY)return;
   ptr.active=true;ptr.x=mx;
 }
@@ -2563,9 +2713,10 @@ function killAlien(a,i){
   reward(a.t.xp);kills++;
   var cy=a.y+a.t.h/2;
   /* killing a splitter does not clear the space, it fills it */
-  if(a.t.splits){
+  var nsp=a.splits||a.t.splits||0;          /* type's own, or the affix */
+  if(nsp){
     var mt=TYPES.mite,n,sx,mhp=mt.hp*curw.hp;
-    for(n=0;n<a.t.splits;n++){
+    for(n=0;n<nsp;n++){
       sx=a.x+(n===0?-a.t.w*0.28:a.t.w*0.28);
       sx=Math.max(mt.w/2+2,Math.min(W-mt.w/2-2,sx));
       aliens.push({t:mt,x:sx,y:a.y+Math.round(a.t.h/2-mt.h/2),hp:mhp,max:mhp,
@@ -2585,10 +2736,10 @@ function killAlien(a,i){
    back to three, already at three or more and you gain one, never past the cap.
    This replaces the old bonus for merely arriving at a boss wave. */
 function bossBounty(){
-  var was=lives;
-  lives=(lives<START_LIVES)?START_LIVES:Math.min(MAX_LIVES,lives+1);
-  if(lives>was){
-    banner=(was<START_LIVES)?'LIVES RESTORED':'+1 LIFE';
+  var was=hp;
+  hp=(hp<START_HP)?START_HP:Math.min(MAX_HP,hp+SEG);
+  if(hp>was){
+    banner=(was<START_HP)?'HULL RESTORED':'+1 HEART';
     bannerT=1.9;sfx.lifeGain();
     for(var i=0;i<14;i++)burst(ship.x+(Math.random()*40-20),SHIP_Y,2,'#ff4d6d',1.3);
   }
@@ -2627,15 +2778,15 @@ function runOver(reason,explode){
     burst(ship.x,SHIP_Y+SHIP_H/2,40,'#8fe9ff',2.4);
     burst(ship.x,SHIP_Y+SHIP_H/2,20,'#ff8a2b',1.8);
   }
-  sfx.lifeLost();shake=8;lives=0;bullets.length=0;
+  sfx.lifeLost();shake=8;hp=0;bullets.length=0;
   endRun(reason);
 }
-/* Letting something through is now a failure, not just lost points: three
-   leaks ends the run exactly like three collisions would. */
-function leakHit(){
-  leaked++;lives--;
+/* Letting something through costs the same hull a collision would, so a
+   colossus walking past you hurts six times as much as a mite does. */
+function leakHit(t){
+  leaked++;
   sfx.leak();shake=5;alarmT=0.6;
-  if(lives<=0)runOver('TOO MANY GOT PAST YOU',false);
+  hullLoss(hullDmg(t),'TOO MANY GOT PAST YOU',false,false);
 }
 /* Getting clipped by an alien used to leave you buried in the rest of them.
    The whole formation is shoved back so the lowest one sits on the midline. */
@@ -2653,24 +2804,54 @@ function pushAliensBack(){
   enforceBruteSpacing();
   for(i=0;i<10;i++)burst(ship.x+(Math.random()*120-60),H*0.55,2,'#8fe9ff',1.4);
 }
-function takeHit(cause,alienHit){
-  if(alienHit)pushAliensBack();
+function takeHit(cause,alienHit,dmg){
+  if(dmg===undefined)dmg=SEG;        /* an unnamed source costs a whole heart */
   if(shield){
+    /* A shield still eats the whole touch, colossus included, and still clears
+       the room - that is most of what makes it worth taking. */
+    if(alienHit)pushAliensBack();
     shield=false;
     burst(ship.x,SHIP_Y+SHIP_H/2,26,'#8fe9ff',1.9);
     sfx.shieldBreak();shake=4;invT=Math.max(invT,1.2);
     return;
   }
-  playerDies(cause);
+  hullLoss(dmg,cause,alienHit,true);
 }
-function playerDies(cause){
-  burst(ship.x,SHIP_Y+SHIP_H/2,36,'#8fe9ff',2.2);
-  burst(ship.x,SHIP_Y+SHIP_H/2,18,'#ff8a2b',1.5);
-  sfx.lifeLost();shake=7;lives--;
-  bullets.length=0;                 /* the field itself stays exactly as it was */
-  if(lives<=0){endRun(cause);}
-  else{respawnT=1.1;invT=INVULN+1.1;ptr.active=false;   /* stay where you fell */
-       spawnT=Math.max(spawnT,1.4);mT=Math.max(mT,2.0);}
+/* Take dmg segments off the hull.
+   The setback - formation shoved back, ship put back down, a long moment of
+   immunity - is bought by ONE touch of SETBACK_AT segments or more. Four mites
+   cost four segments between them and buy none of it, because the rule is per
+   touch rather than cumulative. Anything smaller stings and buys only a brief
+   window, so chip damage can never be spent as a way out of a bad screen. */
+function hullLoss(dmg,cause,alienHit,contact){
+  hp-=dmg;
+  if(hp<=0){
+    if(contact){
+      burst(ship.x,SHIP_Y+SHIP_H/2,36,'#8fe9ff',2.2);
+      burst(ship.x,SHIP_Y+SHIP_H/2,18,'#ff8a2b',1.5);
+    }
+    sfx.lifeLost();shake=8;bullets.length=0;
+    endRun(cause);return;
+  }
+  if(dmg>=SETBACK_AT){
+    if(alienHit)pushAliensBack();
+    sfx.lifeLost();shake=7;
+    if(contact){
+      burst(ship.x,SHIP_Y+SHIP_H/2,36,'#8fe9ff',2.2);
+      burst(ship.x,SHIP_Y+SHIP_H/2,18,'#ff8a2b',1.5);
+      bullets.length=0;             /* the field itself stays exactly as it was */
+      respawnT=1.1;invT=INVULN+1.1;ptr.active=false;  /* stay where you fell */
+      spawnT=Math.max(spawnT,1.4);mT=Math.max(mT,2.0);
+    }else{
+      /* It got PAST you rather than into you, so there is no wreck to put back
+         down - but the room to recover is earned just the same. */
+      invT=Math.max(invT,INVULN);
+    }
+  }else{
+    burst(ship.x,SHIP_Y+SHIP_H/2,12,'#8fe9ff',1.2);
+    sfx.lifeLost();shake=3;
+    invT=Math.max(invT,CHIP_INVULN);
+  }
 }
 function update(dt){
   for(var s=0;s<stars.length;s++){
@@ -2688,6 +2869,7 @@ function update(dt){
      same breath - so a clock that keeps running while paused changes nothing
      about spawning or fairness. */
   gameT+=dt;
+  if(lvlLock>0)lvlLock-=dt;      /* ticks while the cards are up, not just in play */
   if(state!==PLAY)return;
   /* Just died: hold everything in place for a beat, play out the explosion,
      then hand the ship back into the same situation it was lost in. */
@@ -2739,6 +2921,7 @@ function update(dt){
         /* a carapace shrugs a flat amount off every hit, so a wall of tiny
            fast shots barely scratches it and a heavy shot still tells */
         if(a.t.dr)dv=Math.max(1,dv-a.t.dr);
+        if(a.drp)dv=Math.max(1,dv*(1-a.drp));   /* ARMOURED affix */
         a.quiet=0;
         if(a.sh>0){                       /* the shield eats it first */
           var into=Math.min(a.sh,dv);a.sh-=into;dv-=into;
@@ -2786,9 +2969,10 @@ function update(dt){
     if(al.t.accel&&al.spd<al.base*al.t.accel)
       al.spd=Math.min(al.base*al.t.accel,al.spd+al.base*al.t.accel*0.42*dt);
     /* a knitter stitches itself back together if you look away */
-    if(al.t.regen){
+    var rg=(al.t.regen||0)+(al.regen||0);     /* type's own, plus the affix */
+    if(rg){
       al.quiet+=dt;
-      if(al.quiet>1.2&&al.hp<al.max)al.hp=Math.min(al.max,al.hp+al.max*al.t.regen*dt);
+      if(al.quiet>1.2&&al.hp<al.max)al.hp=Math.min(al.max,al.hp+al.max*rg*dt);
     }
     /* a phantom fades out and bullets pass straight through */
     if(al.t.phase){
@@ -2801,7 +2985,7 @@ function update(dt){
     if(al.fl>0)al.fl-=dt;
     if(al.y>H+4){
       if(al.t.boss){runOver(al.t.nm.replace('THE ','')+' BROKE THROUGH',false);return;}
-      aliens.splice(j,1);leakHit();
+      aliens.splice(j,1);leakHit(al.t);
       if(state!==PLAY)return;
       continue;
     }
@@ -2811,7 +2995,7 @@ function update(dt){
          al.x+ax>sweepLo-px&&al.x-ax<sweepHi+px){
         if(al.t.boss){runOver(al.t.dth,true);return;}
         burst(al.x,al.y+al.t.h/2,12,al.t.col,1.3);
-        aliens.splice(j,1);takeHit(al.t.dth,true);return;
+        aliens.splice(j,1);takeHit(al.t.dth,true,hullDmg(al.t));return;
       }
     }
   }
@@ -2861,9 +3045,16 @@ function update(dt){
   }
   if(pendLv>0&&state===PLAY){openLevelUp();return;}
   if(running&&!queue.length&&!aliens.length&&respawnT<=0){
-    if(wi+1<MAXWAVE){reward(25*(wi+1));startWave(wi+1);}
-    else{if(!testRun&&score>best)best=score;MUS.stop();sfx.win();state=WIN;running=false;
-      lbSubmit(MAXWAVE,score);}
+    reward(25*(wi+1));
+    if(wi+1===MAXWAVE){
+      /* Clearing 100 no longer ends the run, it opens insanity. The score is
+         banked HERE as well as on death, so closing the tab at the gate still
+         keeps the 100 - and because the board keeps the better of two runs,
+         carrying on can only ever improve it. */
+      if(!testRun&&score>best)best=score;
+      MUS.stop();sfx.win();state=WIN;running=false;
+      lbSubmit(MAXWAVE,score);
+    } else startWave(wi+1);
   }
 }
 
@@ -3034,6 +3225,20 @@ function drawAliens(){
       ctx.fillStyle='#3a0d0d';ctx.fillRect(x0,y0,bw,2);
       ctx.fillStyle=a.hp/a.max>0.45?'#4fc01f':'#ffb03a';
       ctx.fillRect(x0,y0,Math.max(1,Math.round(bw*a.hp/a.max)),2);
+      y0-=3;
+    }
+    /* Affix pips: one 2px dot per affix in its own colour, stacked above the
+       health bar. Five affixes on one alien is unreadable as a sprite tint,
+       and the player needs to know what is coming BEFORE it arrives rather
+       than working it out from what happens on contact. */
+    /* y0>=0: the pips stack above BOTH bars, so they are the first thing to
+       run off the top of the screen on an alien that has only just entered. */
+    if(a.afx&&a.afx.length&&y0>=0&&y0+2<=H){
+      var pw=3*a.afx.length-1,px=x0+Math.round((bw-pw)/2),pi;
+      for(pi=0;pi<a.afx.length;pi++){
+        ctx.fillStyle=AFFIX[a.afx[pi]].c;
+        ctx.fillRect(px+pi*3,y0,2,2);
+      }
     }
   }
 }
@@ -3044,6 +3249,26 @@ function drawHeart(x,y,col){
   for(var r=0;r<HEART.length;r++)for(var c=0;c<HEART[r].length;c++)
     if(HEART[r].charAt(c)==='#')ctx.fillRect(x+c,y+r,1,1);
 }
+/* A heart is four segments, and it empties LEFT TO RIGHT: the filled part is
+   anchored on the right, so the left edge goes first. That matches the row
+   itself, which is anchored right and shrinks leftward as hearts are lost, so
+   the whole hull drains in one direction instead of zigzagging. The
+   silhouette is always drawn dark underneath so the slot stays readable.
+   Column boundaries are picked by PIXEL AREA, not by column count - the heart
+   is far wider in the middle than at the edges, so four equal column groups
+   would not look like four equal quarters. These give 21/56/79/100%. */
+var HEART_FROM=[11,8,5,3,0];      /* leftmost column still filled, by segment */
+var HEART_FULL='#ff4d6d',HEART_EMPTY='#4a1020';
+function drawHeartSeg(x,y,seg){
+  seg=seg<0?0:(seg>SEG?SEG:seg);
+  var from=HEART_FROM[seg],r,c;
+  for(r=0;r<HEART.length;r++)for(c=0;c<HEART[r].length;c++){
+    if(HEART[r].charAt(c)!=='#')continue;
+    ctx.fillStyle=(c>=from)?HEART_FULL:HEART_EMPTY;
+    ctx.fillRect(x+c,y+r,1,1);
+  }
+}
+
 var GEAR={x:234,y:0,w:22,h:17};
 function drawGear(col,atx,aty){
   var cx=(atx===undefined?GEAR.x+11:atx),cy=(aty===undefined?GEAR.y+8:aty);
@@ -3100,7 +3325,10 @@ function drawHud(){
   ctx.fillStyle='rgba(5,4,12,0.78)';ctx.fillRect(0,0,W,29);
   txt('SCORE '+String(score).padStart(6,'0'),2,4,'#9fd8ff');
   txt('LV'+level,77,4,'#8fe9ff');
-  txt('W'+(wi+1)+'/'+MAXWAVE,108,4,'#ffe066');
+  /* Past the gate there is no denominator to count towards, so the HUD shows
+     the depth instead and goes red to say which side of 100 you are on. */
+  if(wi+1>MAXWAVE)txt('W'+(wi+1)+'  INS',108,4,'#ff5fd2');
+  else txt('W'+(wi+1)+'/'+MAXWAVE,108,4,'#ffe066');
   txt('XP '+xp+'/'+xpNeed,2,17,C_XP);
   if(upXp>1){var xl='x'+upXp.toFixed(2);txt(xl,W-2-txtW(xl),17,C_XP);}
   ctx.fillStyle='#13325e';ctx.fillRect(0,27,W,2);
@@ -3112,7 +3340,10 @@ function drawHud(){
   }else{
     ctx.fillStyle=C_XP;ctx.fillRect(0,27,Math.round(W*Math.max(0,Math.min(1,xp/xpNeed))),2);
   }
-  for(var i=0;i<lives;i++)drawHeart(212-i*12,4,'#ff4d6d');
+  /* Right-anchored and shrinking leftward, the way the row always worked, so
+     the leftmost heart is the one currently being chipped. */
+  for(var i=0;i<hearts();i++)
+    drawHeartSeg(212-i*12,4,Math.min(SEG,hp-i*SEG));
   drawGear(state===SETTINGS?'#ffe066':(state===LEVELUP?'#2e3f58':'#6f8bb0'));
 
 }
@@ -3197,8 +3428,6 @@ var VOLC=['#8a7320','#d9b02e','#ffe066'],VOLT=['#b9a155','#ffdf8f','#fff3c4'];
 function rowStyle(label){
   if(label==='DAMAGE NUMBERS')          /* gold, matching a crit number */
     return dmgNumbers?{c:'#ffd34d',t:'#fff3c4',i:IC_HIT}:{c:'#5a6472',t:'#9aa7b5',i:IC_HIT};
-  if(label==='METEORS')                 /* rock grey when on, dead grey when off */
-    return meteorsOn?{c:'#a89c8b',t:'#e4d9c4',i:IC_ROCK}:{c:'#5a6472',t:'#9aa7b5',i:IC_ROCK};
   if(label==='AUTO LEVEL')
     return autoLevel?{c:'#ff5fd2',t:'#ffc4ef',i:IC_UP}:{c:'#5a6472',t:'#9aa7b5',i:IC_UP};
   return ROWSTYLE[label]||{c:'#24405f',t:'#ffffff',i:null};
@@ -3378,18 +3607,18 @@ function render(){
               '   CRIT '+upCrit+'% x'+upCritD.toFixed(2);
     if(state===OVER)overlay(overReason||'RUN OVER',[
       'SCORE '+score+'   BEST '+best,
-      'WAVE '+(wi+1)+' OF '+MAXWAVE+'   LEVEL '+level,
+      (wi+1>MAXWAVE?'INSANITY WAVE '+(wi+1):'WAVE '+(wi+1)+' OF '+MAXWAVE)+'   LEVEL '+level,
       build,
       'KILLS '+kills+'   LEAKED '+leaked,
       'DODGED '+dodged+'  BROKEN '+broken+'  ACC '+acc+'%',
       'SPACE / TAP FOR THE MENU'],'#ff5555');
     else overlay('ALL 100 WAVES DOWN',[
-      'SCORE '+score+'   BEST '+best,
-      'FINISHED AT LEVEL '+level,
+      'SCORE '+score+'   BEST '+best+'   LEVEL '+level,
+      'THIS RUN IS ON THE BOARD',
       build,
-      'KILLS '+kills+'   LEAKED '+leaked,
-      'DODGED '+dodged+'  BROKEN '+broken+'  ACC '+acc+'%',
-      'SPACE / TAP FOR THE MENU'],'#4fc01f');
+      'BEYOND HERE THE WAVES NEVER STOP.',
+      'EVERY ALIEN CARRIES AFFIXES AND THEY STACK.',
+      'SPACE / TAP TO ENTER INSANITY'],'#ff5fd2');
   }
   ctx.restore();
   /* Drawn last and outside the screen-shake transform, over whatever screen is
@@ -3409,7 +3638,7 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 ship={x:W/2};aliens=[];bullets=[];rocks=[];parts=[];queue=[];wi=0;
-score=0;lives=START_LIVES;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
+score=0;hp=START_HP;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
 fireT=0;bannerT=0;shake=0;invT=0;lvlInvT=0;respawnT=0;conc=2;gap=1.6;spawnT=0;mplan=null;mT=0;
 alarmT=0;lvlFlash=0;
 blockT=0;curw=waveDef(0);level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
