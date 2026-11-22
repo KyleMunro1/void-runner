@@ -607,7 +607,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.70';
+var VERSION='V1.73';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -615,7 +615,12 @@ function waveDef(w){
   var boss=(w+1)%10===0;
   var total=Math.min(36,Math.round(5+w*1.6));
   if(boss)total=Math.max(4,Math.round(total*0.45));   /* the boss is the wave */
-  var bruteShare=Math.min(0.44,Math.max(0,(w-3)*0.040));
+  /* Brutes used to reach their maximum share by wave 15 and sit there for
+     the remaining 85 waves: 3 of them at wave 8, twelve by wave 15. A
+     plausible player could not clear wave 15 at all. The ramp now reaches
+     its maximum around wave 35 instead, so brutes keep growing through most
+     of a run rather than maxing out in the first fifth of it. */
+  var bruteShare=Math.min(0.40,Math.max(0,(w-3)*0.013));
   var droneShare=Math.min(0.44,Math.max(0,(w-1)*0.055));
   var brute=Math.round(total*bruteShare);
   var drone=Math.round(total*droneShare);
@@ -1242,6 +1247,36 @@ function clearOfAll(cand,list){
    falls at the same speed, that stagger holds the whole way down.
    Scouts and drones are unaffected - they die fast enough to shoot through. */
 var BRUTE_VGAP=2;
+/* Brutes move at half the speed of a scout, so they LINGER: a wave that is
+   a third brutes puts far more than a third of them on screen at any moment,
+   and they pile up into a wall. This caps how many may be in front of you at
+   once, and lets that grow across the run the way the rest of the difficulty
+   does. When the cap is reached the queue simply serves something else first,
+   so the wave keeps flowing and the brutes arrive spread out instead of
+   together. */
+function maxBrutesOnScreen(){return Math.min(6,1+Math.floor(wi/7));}
+function bruteCount(){
+  var n=0,i;
+  for(i=0;i<aliens.length;i++)if(aliens[i].t===TYPES.brute)n++;
+  return n;
+}
+/* Staggering at spawn is not enough on its own. Being clipped by an alien
+   shoves the whole formation back and clamps every one of them to the spawn
+   line, which collapsed a staggered pair onto exactly the same y; a wave
+   change can also leave a faster brute closing on a slower one. So the rule
+   is enforced every frame. The lowest brute holds its place and the ones
+   above are nudged UP, never down, so this can only ever delay a brute,
+   never bring it down on the player sooner. */
+function enforceBruteSpacing(){
+  var b=[],i;
+  for(i=0;i<aliens.length;i++)if(aliens[i].t===TYPES.brute)b.push(aliens[i]);
+  if(b.length<2)return;
+  b.sort(function(p,q){return q.y-p.y;});        /* lowest first */
+  for(i=1;i<b.length;i++){
+    var limit=b[i-1].y-b[i].t.h-BRUTE_VGAP;
+    if(b[i].y>limit)b[i].y=limit;
+  }
+}
 function bruteSpawnY(t,sy0){
   var top=sy0,i;
   for(i=0;i<aliens.length;i++){
@@ -1253,7 +1288,16 @@ function bruteSpawnY(t,sy0){
 }
 function spawnAlien(force){
   if(!queue.length)return true;
-  var t=(queue[0]==='boss')?bossFor(wi):TYPES[queue[0]],i,spd=t.spd*curw.spd,sy0=-t.h-2;
+  /* Normally the front of the queue, but a brute waits its turn when there
+     are already as many on screen as this wave allows. */
+  var qi=0;
+  if(queue[0]==='brute'&&!force&&bruteCount()>=maxBrutesOnScreen()){
+    var alt=-1,q;
+    for(q=1;q<queue.length;q++)if(queue[q]!=='brute'){alt=q;break;}
+    if(alt<0)return false;            /* nothing but brutes left: wait for one */
+    qi=alt;
+  }
+  var t=(queue[qi]==='boss')?bossFor(wi):TYPES[queue[qi]],i,spd=t.spd*curw.spd,sy0=-t.h-2;
   if(t===TYPES.brute)sy0=bruteSpawnY(t,sy0);
   var order=[];for(i=0;i<LANES;i++)order.push(i);
   for(i=order.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tm=order[i];order[i]=order[j];order[j]=tm;}
@@ -1281,7 +1325,7 @@ function spawnAlien(force){
       if(sc>far){far=sc;lane=i;}
     }
   }
-  queue.shift();
+  queue.splice(qi,1);
   var x=laneX(lane)+Math.round((Math.random()*2-1)*5),half=t.w/2;
   x=Math.max(half+2,Math.min(W-half-2,x));
   var hp=t.hp*curw.hp;
@@ -1508,8 +1552,11 @@ function cleanName(v){
    finished a run - but the name and hull are pulled back when it does. */
 function adoptShip(k){
   for(var i=0;i<SHIP_THEMES.length;i++)
-    if(SHIP_THEMES[i].k===k){shipTheme=i;
-      try{localStorage.setItem('vr_ship',k);}catch(e){}return true;}
+    if(SHIP_THEMES[i].k===k){
+      /* setShipTheme, not a bare assignment: it rebuilds the sprite too.
+         Assigning the index alone left the ship still painted its old colour
+         until the page was reloaded. */
+      setShipTheme(i);return true;}
   return false;
 }
 function applyCode(code){
@@ -2243,10 +2290,17 @@ function move(e){
   if(ptr.active){e.preventDefault();ptr.x=pxFromEvent(e);}
 }
 function up(){ptr.active=false;dragChan=-1;dragBoard=false;}
-cv.addEventListener('mousedown',down);cv.addEventListener('mousemove',move);
+cv.addEventListener('mousedown',down);
+/* Tracked on the WINDOW, not the canvas. Listening on the canvas meant the
+   moment the cursor slid off the playfield the ship stopped following it and
+   stuck where it was - easy to do on a desktop, where the canvas is a narrow
+   strip in the middle of a wide page. The ship is clamped to the playfield
+   anyway, so an off-canvas cursor simply pins it to that edge and it picks
+   the drag straight back up on the way in. */
+window.addEventListener('mousemove',move);
 window.addEventListener('mouseup',up);
 cv.addEventListener('touchstart',down,{passive:false});
-cv.addEventListener('touchmove',move,{passive:false});
+window.addEventListener('touchmove',move,{passive:false});
 window.addEventListener('touchend',up);
 
 /* ================= update ================= */
@@ -2328,6 +2382,8 @@ function pushAliensBack(){
     var topY=-aliens[i].t.h-2;
     if(aliens[i].y<topY)aliens[i].y=topY;
   }
+  /* The clamp above collapses any brute stagger onto one line. Rebuild it. */
+  enforceBruteSpacing();
   for(i=0;i<10;i++)burst(ship.x+(Math.random()*120-60),H*0.55,2,'#8fe9ff',1.4);
 }
 function takeHit(cause,alienHit){
@@ -2409,7 +2465,8 @@ function update(dt){
     var gone=false;
     for(var i=0;i<aliens.length;i++){
       var a=aliens[i],aw=a.t.w/2;
-      if(bu.x+1>=a.x-aw&&bu.x<=a.x+aw&&bu.y<=a.y+a.t.h&&bu.y+5>=a.y){
+      /* symmetric about the centre, to match where it is drawn */
+      if(bu.x+1>=a.x-aw&&bu.x-1<=a.x+aw&&bu.y<=a.y+a.t.h&&bu.y+5>=a.y){
         var cr=upCrit>0&&Math.random()*100<upCrit;
         var dv=bulletDmg()*(cr?upCritD:1);
         a.hp-=dv;a.fl=0.07;hits++;burst(bu.x,bu.y,cr?4:2,cr?'#ffd34d':'#ffe066',cr?1.2:0.9);
@@ -2446,6 +2503,7 @@ function update(dt){
   }
 
   /* ---- aliens: fixed x, pure y travel ---- */
+  enforceBruteSpacing();
   for(var j=aliens.length-1;j>=0;j--){
     var al=aliens[j];
     al.y+=al.spd*dt;
@@ -2960,8 +3018,11 @@ function render(){
 
   if(state===PLAY||state===OVER||state===WIN||state===LEVELUP||state===SETTINGS){
     for(var b=0;b<bullets.length;b++){
-      ctx.fillStyle='#ffe066';ctx.fillRect(Math.round(bullets[b].x),Math.round(bullets[b].y),2,5);
-      ctx.fillStyle='#fff7c2';ctx.fillRect(Math.round(bullets[b].x),Math.round(bullets[b].y),2,2);
+      /* x is the bullet's CENTRE. Drawing a 2px bullet from x put its middle
+         a pixel right of the nose, which is visible on a 256-wide canvas. */
+      var bx=Math.round(bullets[b].x)-1;
+      ctx.fillStyle='#ffe066';ctx.fillRect(bx,Math.round(bullets[b].y),2,5);
+      ctx.fillStyle='#fff7c2';ctx.fillRect(bx,Math.round(bullets[b].y),2,2);
     }
     drawAliens();drawRocks();
     for(var p=0;p<parts.length;p++){
