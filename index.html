@@ -891,7 +891,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.85';
+var VERSION='V1.86';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -2197,8 +2197,16 @@ function drawBoardBlock(){
    directly above DEMO MODE, so the hull orange here made two adjacent buttons
    identical and looked like a mistake. SPACESHIP's value below is only a
    fallback - the draw always overrides it with the hull. */
-var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#ffe066'],
-                ['DEMO MODE','#ff9a2e'],['SETTINGS','#c86bff']];
+var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#c86bff'],
+                ['DEMO MODE','#ff9a2e'],['SETTINGS','#ff6b6b']];
+/* The hull button is the one row whose frame and whose contents are coloured
+   separately: the frame keeps the purple that settings used to wear, while the
+   ship and its label are painted in the hull you chose. Settings takes a red
+   at the same brightness the purple had, so the set keeps its even weight. */
+function menuChrome(i){return MENU_ITEMS[i][1];}
+function menuContent(i){
+  return MENU_ITEMS[i][0]==='SPACESHIP'?SHIP_THEMES[shipTheme].B:MENU_ITEMS[i][1];
+}
 /* Four buttons do not fit a 256x384 canvas at the old fixed 34+11, and the
    old code just overflowed - the bottom one landed on the footer. So the gap
    closes first, then the buttons themselves shrink, both to a floor that
@@ -3625,18 +3633,18 @@ function render(){
     drawBoardBlock();
     for(var mi=0;mi<MENU_ITEMS.length;mi++){
       var mr=menuRect(mi),mlab=MENU_ITEMS[mi][0];
-      /* the hull button wears the colour you picked, so the menu itself shows
-         which ship you are about to fly */
-      var mc=(mlab==='SPACESHIP')?SHIP_THEMES[shipTheme].B:MENU_ITEMS[mi][1];
-      panel(mr,mc);
-      ctx.fillStyle=mc;ctx.fillRect(mr.x,mr.y,4,mr.h);
+      /* frame and contents are separate: only the hull button differs between
+         them, and that is what shows your ship without recolouring the row */
+      var ch=menuChrome(mi),co=menuContent(mi);
+      panel(mr,ch);
+      ctx.fillStyle=ch;ctx.fillRect(mr.x,mr.y,4,mr.h);
       var icy=mr.y+Math.round(mr.h/2);
-      if(mlab==='NEW RUN')drawIcon(IC_PLAY,mr.x+14,icy-4,mc);
-      else if(mlab==='DEMO MODE')drawIcon(IC_EYE,mr.x+14,icy-3,mc);
+      if(mlab==='NEW RUN')drawIcon(IC_PLAY,mr.x+14,icy-4,co);
+      else if(mlab==='DEMO MODE')drawIcon(IC_EYE,mr.x+14,icy-3,co);
       else if(mlab==='SPACESHIP')
         ctx.drawImage(SHIP_THEMES[shipTheme].icon,mr.x+11,icy-8);
-      else drawGear(mc,mr.x+19,icy);
-      txt(mlab,W/2,icy-3,mc,true);
+      else drawGear(co,mr.x+19,icy);
+      txt(mlab,W/2,icy-3,co,true);
     }
     txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
     /* Dimmer than the name above it, so it reads as a footnote. */
