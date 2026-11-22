@@ -95,8 +95,14 @@ export default async (req: Request, _context: Context) => {
     }
 
     const id = cleanId(body.id);
-    const wave = cleanInt(body.wave, 1, 100);
-    const score = cleanInt(body.score, 0, 10_000_000);
+    /* Waves do not stop at 100 any more: clearing it opens insanity and the
+     * count carries on without a ceiling. This bound was still 1-100, so
+     * every single insanity run was rejected outright with a 400 and the
+     * player kept only the 100 banked at the gate. The bounds here exist to
+     * throw out garbage, not to encode the game's rules, so they are now
+     * generous enough that the game can never outgrow them again. */
+    const wave = cleanInt(body.wave, 1, 100_000);
+    const score = cleanInt(body.score, 0, 1_000_000_000);
     const major = cleanMajor(body.v);
     if (!id || wave === null || score === null) {
       return Response.json({ ok: false, error: "bad score" }, { status: 400 });
