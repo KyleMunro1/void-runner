@@ -20,3 +20,16 @@ each one different, and beating one patches you back up.
 
 Serve the directory as a static site. On Netlify: no build command, publish
 from the root.
+
+## Leaderboard
+
+`netlify/functions/scores.mts` serves `/api/scores` and keeps one blob per
+player per major version in Netlify Blobs, so no database needs provisioning.
+
+- `GET /api/scores?v=1` returns the board for that major version
+- `POST /api/scores` records a run, keeping whichever is better
+
+Only a player writes their own record, so there is no shared counter and no
+read-modify-write race between people. Everything posted is re-validated
+server-side. The page falls back to a local-only board wherever the API cannot
+be reached, which includes any context that blocks outbound requests.

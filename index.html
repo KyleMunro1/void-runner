@@ -10,6 +10,9 @@ html,body{height:100%;height:100dvh;background:#05040c;overflow:hidden;overscrol
   font-family:"Courier New",ui-monospace,monospace;color:#8fc9ff;
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;-webkit-tap-highlight-color:transparent}
 #wrap{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}
+#nameIn{position:fixed;display:none;z-index:5;background:transparent;border:0;outline:0;
+  color:transparent;caret-color:transparent;font-size:16px;padding:0;margin:0;
+  -webkit-tap-highlight-color:transparent}
 canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
   box-shadow:0 0 40px rgba(50,120,255,.18);touch-action:none;display:block}
 </style>
@@ -17,6 +20,11 @@ canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
 <body>
 <div id="wrap">
   <canvas id="c"></canvas>
+  <!-- The name field is a real input so phones raise their own keyboard, but
+       it is invisible: the canvas draws the text in the game's own font so the
+       card still looks hand-pixelled. -->
+  <input id="nameIn" type="text" maxlength="14" autocomplete="off"
+         autocapitalize="characters" autocorrect="off" spellcheck="false">
   
 </div>
 <script>
@@ -42,22 +50,38 @@ var H=pickH();
    react is identical on every device. */
 var REF_H=352, VS=H/REF_H;
 var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var nameIn=document.getElementById('nameIn');
 cv.width=W;cv.height=H;ctx.imageSmoothingEnabled=false;ctx.textBaseline='top';
 
 /* Fill the viewport. Integer scales keep pixels perfectly square, so snap to
    one when it costs almost nothing - otherwise take the fractional scale and
    the screen real estate. The old code floored unconditionally, which turned
    a 1.47x phone fit into 1x and left the game tiny. */
+/* The host's own badge sits fixed in the bottom-right corner and swallows
+   touches there, which is exactly where a thumb steers the ship. Keep the
+   canvas clear of it rather than hiding it: the strip below the canvas is
+   where the badge lives. */
+function badgeInset(){
+  /* fit() runs at startup, so this must never throw */
+  var h='';
+  try{h=(window.location&&window.location.hostname)||'';}catch(e){}
+  return (h.indexOf('netlify')>=0)?58:0;
+}
 function fit(){
-  var hh=0;
   var vw=(window.visualViewport&&window.visualViewport.width)||window.innerWidth;
   var vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
-  var avW=Math.max(80,vw-8),avH=Math.max(80,vh-hh-8);
+  var inset=badgeInset();
+  var avW=Math.max(80,vw-8),avH=Math.max(80,vh-inset-8);
   var s=Math.min(avW/W,avH/H);
   var si=Math.floor(s);
   if(si>=1&&si/s>=0.97)s=si;                 /* crisp only when it is nearly free */
   cv.style.width=Math.round(W*s)+'px';
   cv.style.height=Math.round(H*s)+'px';
+  /* the canvas centres inside #wrap, so padding there lifts it clear of the
+     strip; body padding would do nothing, #wrap is position:fixed */
+  var wrap=document.getElementById('wrap');
+  if(wrap)wrap.style.paddingBottom=inset+'px';
+  placeNameInput();
 }
 window.addEventListener('resize',fit);
 window.addEventListener('orientationchange',function(){setTimeout(fit,120);});
@@ -556,7 +580,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.51';
+var VERSION='V1.59';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -847,7 +871,7 @@ var stars=[];
 })();
 
 /* ================= state ================= */
-var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6;
+var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7;
 var state=MENU;
 var ship,aliens,bullets,rocks,parts,queue,wi,curw,conc,gap,spawnT,mplan,mT,blockT;
 var level,xp,xpNeed,pendLv,choices;
@@ -857,6 +881,7 @@ var alarmT,overReason='';
 var lvlFlash=0,running=false;
 var fireT,banner,bannerT,shake,invT,respawnT,best=0,setPage=0;
 var keys={},ptr={active:false,x:W/2};
+var dragBoard=false,dragY=0,dragFrom=0;
 
 var LANES=5;
 function laneX(i){return Math.round((i+0.5)*(W/LANES));}
@@ -870,8 +895,12 @@ function reward(n){
 }
 /* setPage: 0 main, 1 ship colour, 2 sound */
 function pageRect(i,n){
-  var h=26,gap=9,tot=n*h+(n-1)*gap;
-  var lo=112,hi=H-46;                      /* under the stat grid, over the footer */
+  var h=26,lo=112,hi=H-46,gap=9;           /* under the stat grid, over the footer */
+  /* seven rows do not fit a short canvas at the roomy gap, so tighten it
+     rather than letting the list run off the bottom */
+  if(n>1&&n*h+(n-1)*gap>hi-lo)
+    gap=Math.max(3,Math.floor((hi-lo-n*h)/(n-1)));
+  var tot=n*h+(n-1)*gap;
   var top=(hi-lo>tot)?lo+Math.round((hi-lo-tot)/2):lo;
   return {x:22,y:top+i*(h+gap),w:212,h:h};
 }
@@ -918,19 +947,31 @@ function closeSettings(){
   state=setBack;
   if(setBack===PLAY)MUS.start();
 }
+/* Opened from the menu there is no run to restart or resume, and MAIN MENU is
+   where you already are, so those three collapse into one BACK. */
+function fromMenu(){return setBack===MENU;}
 function pageRows(){
-  return [['SOUND OPTIONS',''],
-          ['SPACESHIP',''],
-          ['GAMEPLAY',''],
-          ['MAIN MENU',''],
-          ['RESTART RUN',''],
-          ['RESUME','']];
+  var r=[['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['SPACESHIP','']];
+  if(fromMenu())r.push(['BACK','']);
+  else r.push(['MAIN MENU',''],['RESTART RUN',''],['RESUME','']);
+  return r;
 }
 /* setPage 3: the switches that change how the game itself plays */
 function gpRows(){
   return [['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
           ['METEORS',meteorsOn?'ON':'OFF'],
           ['AUTO LEVEL',autoLevel?'ON':'OFF']];
+}
+/* setPage 4: who you are. Just the name for now. */
+function pfRows(){return [['PLAYER NAME',playerName||'NOT SET']];}
+function pfRect(i){
+  var h=30,gap=12,n=pfRows().length,tot=n*h+(n-1)*gap;
+  return {x:22,y:Math.max(84,Math.round((H-56-tot)/2))+i*(h+gap),w:212,h:h};
+}
+function pfActivate(i){
+  if(i===0){sfx.pick();var back=setBack;closeSettings();
+    if(back!==MENU)toMenu();
+    openNamePrompt(true);}
 }
 function gpRect(i){
   var h=30,gap=12,n=gpRows().length,tot=n*h+(n-1)*gap;
@@ -945,12 +986,14 @@ function gpActivate(i){
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
 }
 function activateRow(i){
-  if(i===0){setPage=2;sfx.pick();}
-  else if(i===1){setPage=1;sfx.pick();}
+  if(i===0){setPage=4;sfx.pick();}
+  else if(i===1){setPage=2;sfx.pick();}
   else if(i===2){setPage=3;sfx.pick();}
-  else if(i===3){toMenu();sfx.pick();}
-  else if(i===4){reset();}
-  else if(i===5){closeSettings();}
+  else if(i===3){setPage=1;sfx.pick();}
+  else if(fromMenu()){if(i===4){sfx.pick();closeSettings();}}
+  else if(i===4){sfx.pick();askConfirm('menu');}
+  else if(i===5){sfx.pick();askConfirm('restart');}
+  else if(i===6){closeSettings();}
 }
 function shuffle(a){
   for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t;}
@@ -1056,7 +1099,7 @@ function reset(){
   fireT=0;shake=0;invT=INVULN;respawnT=0;blockT=0;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
   upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];
-  startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;
+  startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;confirmAct='';
 }
 
 /* ================= spawning ================= */
@@ -1245,7 +1288,14 @@ function addDmgNum(cx,cy,v,crit,halfW){
       if(sc>=1){x=px;y=py;break;}
     }
   }
-  if(x===null){x=(bx===null)?cx:bx;if(y===null)y=cy-3;}
+  if(x===null){
+    /* Row packed solid: the margins are nearly always empty, so take the
+       clearer edge rather than dropping the number inside a sprite. */
+    var le=2+half,re=W-2-half,ly=rowY[0];
+    var lc=clearanceAt(le,half,ly),rc=clearanceAt(re,half,ly);
+    if(Math.max(lc,rc)>=1){x=(lc>=rc)?le:re;y=ly;}
+    else {x=(bx===null)?cx:bx;if(y===null)y=cy-3;}
+  }
   if(x-half<2)x=2+half;
   if(x+half>W-2)x=W-2-half;
   var i,tries=0;
@@ -1317,21 +1367,165 @@ function burst(x,y,n,col,pow){
   }
 }
 
+/* ================= players and the leaderboard ================= */
+/* A player is a random id kept in this browser, not an account: no sign-in,
+   no password, nothing to lose. The name and hull ride along with each score
+   so the board can show both. */
+var playerId='',playerName='',askName=false,nameEdit=false,nameDraft='',nameCaret=0;
+try{playerId=localStorage.getItem('vr_pid')||'';}catch(e){}
+if(!/^[a-z0-9]{6,32}$/.test(playerId)){
+  playerId=(Math.random().toString(36).slice(2)+Math.random().toString(36).slice(2)+
+            Date.now().toString(36)).replace(/[^a-z0-9]/g,'').slice(0,16);
+  try{localStorage.setItem('vr_pid',playerId);}catch(e){}
+}
+try{playerName=localStorage.getItem('vr_name')||'';}catch(e){}
+
+function cleanName(v){
+  return String(v||'').toUpperCase().replace(/[^A-Z0-9 _.-]/g,'').trim().slice(0,14);
+}
+function majorVer(){
+  var m=String(VERSION).replace(/[^0-9.]/g,'').split('.')[0];
+  return m||'1';
+}
+
+/* rows: [{id,name,wave,score,ship}]. mode: 'live' once the server answers,
+   'local' when it cannot be reached, which is every artifact view since those
+   pages are not allowed to call out. */
+var LB={rows:[],mode:'local',busy:false,err:'',scroll:0};
+
+function lbLocalRows(){
+  var best=null;
+  try{best=JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){}
+  if(!best)return [];
+  return [{id:playerId,name:playerName||'YOU',wave:best.wave,score:best.score,
+           ship:SHIP_THEMES[shipTheme].k}];
+}
+function lbRememberLocal(wave,score){
+  var cur=null;
+  try{cur=JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){}
+  if(!cur||wave>cur.wave||(wave===cur.wave&&score>cur.score)){
+    try{localStorage.setItem('vr_best',JSON.stringify({wave:wave,score:score}));}catch(e){}
+  }
+}
+function lbApply(data){
+  if(data&&data.ok&&data.rows){LB.rows=data.rows;LB.mode='live';LB.err='';return true;}
+  return false;
+}
+function lbFallback(){
+  if(LB.mode!=='live'){LB.rows=lbLocalRows();LB.mode='local';}
+}
+/* The board is a nice-to-have: nothing in here may ever stop the game
+   starting, so every call is guarded and failure just means a local board. */
+function canFetch(){return typeof fetch==='function';}
+function lbLoad(){
+  if(LB.busy)return;
+  lbFallback();
+  if(!canFetch())return;
+  LB.busy=true;
+  var done=false,t=null;
+  function finish(d){
+    if(done)return;
+    done=true;LB.busy=false;
+    if(t!==null&&typeof clearTimeout==='function')clearTimeout(t);
+    if(!d||!lbApply(d))lbFallback();
+  }
+  try{
+    if(typeof setTimeout==='function')t=setTimeout(function(){finish(null);},8000);
+    fetch('/api/scores?v='+majorVer(),{method:'GET'})
+      .then(function(r){return r.json();})
+      .then(finish)
+      .catch(function(){finish(null);});
+  }catch(e){finish(null);}
+}
+/* Test runs from the wave picker never post: they start pre-levelled, so they
+   are not comparable with a run played from wave 1. */
+function lbSubmit(wave,score){
+  lbRememberLocal(wave,score);
+  if(testRun||!canFetch())return;
+  try{
+    fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({id:playerId,name:playerName||'ANON',wave:wave,score:score,
+                           ship:SHIP_THEMES[shipTheme].k,v:majorVer()})})
+      .then(function(r){return r.json();})
+      .then(function(d){if(!lbApply(d))lbFallback();})
+      .catch(function(){lbFallback();});
+  }catch(e){lbFallback();}
+}
+function lbRank(){
+  for(var i=0;i<LB.rows.length;i++)if(LB.rows[i].id===playerId)return i+1;
+  return 0;
+}
+function shipColour(k){
+  for(var i=0;i<SHIP_THEMES.length;i++)if(SHIP_THEMES[i].k===k)return SHIP_THEMES[i].B;
+  return '#2b7fe0';
+}
+
 /* ================= main menu ================= */
 /* The top block is a fixed stack measured from the top of the canvas; the
    buttons then centre themselves in whatever room is left above the footer,
    so a tall phone spreads out instead of leaving a gap at the bottom. */
-var MENU_STACK_END=210;
+/* Everything on the menu hangs off this margin rather than sitting at a fixed
+   y, so a tall phone gives the title room to breathe instead of pinning it to
+   the top edge, and a short canvas still fits. */
+function menuTop(){return Math.round(H*0.045);}
+/* The strapline belongs with the board, not with the title, so it hangs well
+   below the name and the whole group travels together. */
+function menuSubY(){return menuTop()+21+Math.round(H*0.040);}
+var LB_ROWS=5,LB_RH=20;
+function lbTop(){return menuSubY()+48;}
+function menuStackEnd(){var p=lbPanel();return p.y+p.h+14;}
+function lbPanel(){return {x:12,y:lbTop()-10,w:W-24,h:LB_ROWS*LB_RH+14};}
+var C_GOLD='#ffd34d';
+function lbRowRect(i){return {x:16,y:lbTop()+i*LB_RH,w:W-32,h:LB_RH};}
+
+/* the name card, drawn over the menu */
+function nameCard(){return {x:20,y:Math.round(H*0.30),w:W-40,h:104};}
+function nameFieldRect(){var c=nameCard();return {x:c.x+14,y:c.y+34,w:c.w-28,h:22};}
+/* Dismiss sits on the left, confirm on the right. */
+function nameLaterRect(){var c=nameCard();return {x:c.x+14,y:c.y+68,w:Math.round((c.w-38)/2),h:24};}
+function nameOkRect(){var c=nameCard(),l=nameLaterRect();
+  return {x:l.x+l.w+10,y:l.y,w:c.w-28-l.w-10,h:24};}
+
+/* one row of the board, shared by the menu and the full screen */
+function drawLbRow(r,row,rank,me){
+  var c=shipColour(row.ship);
+  if(me){ctx.fillStyle='rgba(143,233,255,0.10)';ctx.fillRect(r.x,r.y,r.w,r.h);}
+  var cy=r.y+Math.round((r.h-FH)/2);
+  txt(rank,r.x+8,cy,rank<=3?'#ffd34d':'#5f6a7a',true);
+  ctx.fillStyle=c;ctx.fillRect(r.x+16,r.y+Math.round(r.h/2)-3,7,7);
+  ctx.fillStyle='#0a0f1c';ctx.fillRect(r.x+18,r.y+Math.round(r.h/2)-1,3,3);
+  var nm=String(row.name||'ANON').slice(0,10);
+  txt(nm,r.x+29,cy,me?'#ffffff':'#9fd8ff');
+  txt('W'+row.wave,r.x+r.w-78,cy,'#ffe066');
+  txt(String(row.score),r.x+r.w-6-txtW(String(row.score)),cy,'#7fb4e8');
+}
+function drawBoardBlock(){
+  var p=lbPanel();panel(p,C_GOLD);
+  txtBig('LEADERBOARD',W/2,lbTop()-30,C_GOLD,2);
+  if(!LB.rows.length){
+    txt(LB.busy?'LOADING':'NO RUNS YET',W/2,p.y+Math.round(p.h/2)-10,'#3f6490',true);
+    txt(LB.busy?'':'BE THE FIRST',W/2,p.y+Math.round(p.h/2)+2,'#2e3f58',true);
+  }else{
+    for(var i=0;i<Math.min(LB_ROWS,LB.rows.length);i++)
+      drawLbRow(lbRowRect(i),LB.rows[i],i+1,LB.rows[i].id===playerId);
+  }
+  var rk=lbRank(),hint;
+  if(LB.mode!=='live')hint='LOCAL ONLY - BOARD IS OFFLINE HERE';
+  else if(rk>LB_ROWS)hint='YOU ARE #'+rk+'  -  TAP FOR THE FULL BOARD';
+  else hint='TAP FOR THE FULL BOARD';
+  txt(hint,W/2,p.y+p.h+5,'#2e3f58',true);
+}
 var MENU_ITEMS=[['NEW RUN','#4fc01f'],['DEMO MODE','#4fa3ff'],['SETTINGS','#c86bff']];
 function menuRect(i){
   var h=34,gap=11,n=MENU_ITEMS.length,tot=n*h+(n-1)*gap;
-  var lo=MENU_STACK_END+8,hi=H-46;   /* leaves the BEST line and footer clear */
+  var lo=menuStackEnd()+8,hi=H-46;   /* leaves the footer clear */
   var top=(hi-lo>tot)?lo+Math.round((hi-lo-tot)/2):lo;
   return {x:30,y:top+i*(h+gap),w:W-60,h:h};
 }
-function menuGapTop(){return MENU_STACK_END+8;}
+function menuGapTop(){return menuStackEnd()+8;}
 function toMenu(){
-  state=MENU;setPage=0;pickBuf='';running=false;MUS.stop();
+  state=MENU;setPage=0;pickBuf='';running=false;confirmAct='';MUS.stop();
+  lbLoad();
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];dnums=[];
   bannerT=0;alarmT=0;shake=0;
 }
@@ -1340,6 +1534,128 @@ function menuPick(i){
   if(i===0){testRun=false;reset();}
   else if(i===1){state=PICK;pickBuf='';}
   else{state=SETTINGS;setPage=0;setBack=MENU;}
+}
+
+/* The field is invisible and sits exactly over the drawn one, so the phone
+   raises its own keyboard while the canvas does all the drawing. */
+function placeNameInput(){
+  if(!nameIn||!askName)return;
+  var r=cv.getBoundingClientRect(),sc=r.width/W,f=nameFieldRect();
+  nameIn.style.left=(r.left+f.x*sc)+'px';
+  nameIn.style.top=(r.top+f.y*sc)+'px';
+  nameIn.style.width=(f.w*sc)+'px';
+  nameIn.style.height=(f.h*sc)+'px';
+}
+if(nameIn){
+  nameIn.addEventListener('input',function(){
+    nameDraft=cleanName(nameIn.value);
+    if(nameIn.value!==nameDraft)nameIn.value=nameDraft;
+  });
+  nameIn.addEventListener('keydown',function(e){
+    if(e.key==='Enter'){e.preventDefault();if(cleanName(nameDraft))closeNamePrompt(true);}
+    else if(e.key==='Escape'){e.preventDefault();closeNamePrompt(false);}
+  });
+}
+
+/* ================= confirm ================= */
+/* Leaving or restarting mid-run throws the run away, so it asks first. The
+   confirm button is labelled with the action rather than a bare "continue",
+   which reads just as much like "carry on playing". */
+var confirmAct='';
+function askConfirm(what){confirmAct=what;}
+function confirmCard(){return {x:22,y:Math.round(H*0.34),w:W-44,h:92};}
+function confirmYes(){var c=confirmCard();
+  return {x:c.x+12,y:c.y+c.h-34,w:Math.round((c.w-34)/2),h:24};}
+function confirmNo(){var c=confirmCard(),y=confirmYes();
+  return {x:y.x+y.w+10,y:y.y,w:c.w-24-y.w-10,h:24};}
+function drawConfirm(){
+  ctx.fillStyle='rgba(3,5,12,0.84)';ctx.fillRect(0,0,W,H);
+  var c=confirmCard();panel(c,'#e03b3b');
+  txt(confirmAct==='menu'?'LEAVE THIS RUN':'RESTART THIS RUN',W/2,c.y+12,'#ff9a9a',true);
+  txt('WAVE '+(wi+1)+'   SCORE '+score,W/2,c.y+26,'#ffe066',true);
+  txt('THIS RUN WILL BE LOST',W/2,c.y+40,'#5f6a7a',true);
+  var y=confirmYes(),n=confirmNo();
+  panel(y,'#e03b3b');
+  txt(confirmAct==='menu'?'MAIN MENU':'RESTART',y.x+Math.round(y.w/2),y.y+Math.round((y.h-FH)/2),'#ff9a9a',true);
+  panel(n,'#4fc01f');
+  txt('CANCEL',n.x+Math.round(n.w/2),n.y+Math.round((n.h-FH)/2),'#b9ffa8',true);
+}
+function doConfirm(){
+  var a=confirmAct;confirmAct='';
+  if(a==='menu')toMenu();
+  else if(a==='restart')reset();
+}
+
+/* ================= name card ================= */
+function drawNameCard(){
+  ctx.fillStyle='rgba(3,5,12,0.82)';ctx.fillRect(0,0,W,H);
+  var c=nameCard();panel(c,'#4fa3ff');
+  txt(nameEdit?'CHANGE YOUR NAME':'WHO ARE YOU',W/2,c.y+10,'#8fe9ff',true);
+  txt('YOUR NAME ON THE LEADERBOARD',W/2,c.y+22,'#3f6490',true);
+  var f=nameFieldRect();
+  ctx.fillStyle='#070b16';ctx.fillRect(f.x,f.y,f.w,f.h);
+  ctx.fillStyle='#24405f';
+  ctx.fillRect(f.x,f.y,f.w,1);ctx.fillRect(f.x,f.y+f.h-1,f.w,1);
+  ctx.fillRect(f.x,f.y,1,f.h);ctx.fillRect(f.x+f.w-1,f.y,1,f.h);
+  var ty=f.y+Math.round((f.h-FH)/2);
+  if(nameDraft)txt(nameDraft,f.x+7,ty,'#ffffff');
+  else txt('TAP TO TYPE',f.x+7,ty,'#2e3f58');
+  if(Math.floor(gameT*2)%2===0){                     /* caret */
+    ctx.fillStyle='#8fe9ff';
+    ctx.fillRect(f.x+7+txtW(nameDraft)+(nameDraft?1:0),ty-1,1,FH+2);
+  }
+  var ok=nameOkRect(),later=nameLaterRect(),can=cleanName(nameDraft).length>0;
+  panel(later,'#3f6490');
+  txt(nameEdit?'CANCEL':'LATER',later.x+Math.round(later.w/2),
+      later.y+Math.round((later.h-FH)/2),'#9fd8ff',true);
+  panel(ok,can?'#4fc01f':'#2b3340');
+  txt('CONTINUE',ok.x+Math.round(ok.w/2),ok.y+Math.round((ok.h-FH)/2),can?'#b9ffa8':'#4a5260',true);
+}
+function openNamePrompt(edit){
+  askName=true;nameEdit=!!edit;nameDraft=playerName||'';
+  if(nameIn){nameIn.value=nameDraft;placeNameInput();nameIn.style.display='block';
+    try{nameIn.focus({preventScroll:true});}catch(e){try{nameIn.focus();}catch(e2){}}}
+}
+function closeNamePrompt(save){
+  if(save){
+    var n=cleanName(nameDraft);
+    if(n){playerName=n;try{localStorage.setItem('vr_name',n);}catch(e){}}
+  }
+  askName=false;
+  if(nameIn){nameIn.blur();nameIn.style.display='none';}
+}
+
+/* ================= full leaderboard ================= */
+function boardRowRect(i){return {x:16,y:76+i*LB_RH-LB.scroll,w:W-32,h:LB_RH};}
+function boardMaxScroll(){
+  var visible=H-76-56;
+  return Math.max(0,LB.rows.length*LB_RH-visible);
+}
+function drawBoard(){
+  txtBig('LEADERBOARD',W/2,22,'#ffe066',2);
+  txt(LB.mode==='live'?('VERSION '+majorVer()+'  -  '+LB.rows.length+' RUNNERS')
+                      :'OFFLINE  -  THIS DEVICE ONLY',W/2,46,'#3f6490',true);
+  var top=70,bot=H-56;
+  ctx.save();ctx.beginPath();ctx.rect(0,top,W,bot-top);ctx.clip();
+  if(!LB.rows.length){
+    txt(LB.busy?'LOADING':'NO RUNS YET',W/2,top+30,'#3f6490',true);
+  }else{
+    for(var i=0;i<LB.rows.length;i++){
+      var r=boardRowRect(i);
+      if(r.y+r.h<top||r.y>bot)continue;
+      drawLbRow(r,LB.rows[i],i+1,LB.rows[i].id===playerId);
+    }
+  }
+  ctx.restore();
+  if(boardMaxScroll()>0){                            /* scroll position */
+    var tr=Math.round((bot-top)*(LB.scroll/(boardMaxScroll()+(bot-top))));
+    var th=Math.max(12,Math.round((bot-top)*((bot-top)/(LB.rows.length*LB_RH))));
+    ctx.fillStyle='#13325e';ctx.fillRect(W-5,top,2,bot-top);
+    ctx.fillStyle='#4fa3ff';ctx.fillRect(W-5,top+tr,2,th);
+  }
+  var br=backRect();panel(br,'#3f6490');
+  drawIcon(IC_BACK,br.x+12,br.y+Math.round((br.h-9)/2),'#3f6490');
+  txt('BACK',W/2+8,br.y+10,'#9fd8ff',true);
 }
 
 /* ================= wave picker ================= */
@@ -1385,24 +1701,42 @@ function drawPick(){
 
 /* ================= input ================= */
 window.addEventListener('keydown',function(e){
+  /* A and D steer the ship, so the game used to swallow them before the name
+     field ever saw them: typing an A did nothing. While the field is up the
+     game takes no keys at all. */
+  if(askName||(nameIn&&e.target===nameIn))return;
   var k=e.key.toLowerCase();
   if(['arrowleft','arrowright','a','d',' '].indexOf(k)>=0)e.preventDefault();
   keys[k]=true;
   if(k==='m'){onMaster=!onMaster;syncVol();saveSnd();}
+  if(state===SETTINGS&&confirmAct){
+    if(k==='escape'||k==='n')confirmAct='';
+    else if(k==='enter'||k==='y')doConfirm();
+    return;
+  }
   if(state===SETTINGS){
     if(k==='p'||k==='escape'){if(setPage)setPage=0;else closeSettings();return;}
     if(k>='1'&&k<='9'){
       var n=+k-1;
       if(setPage===1){if(n<SHIP_THEMES.length){setShipTheme(n);sfx.pick();setPage=0;}}
       else if(setPage===2){if(n<CHAN.length)chanToggleHit(n);}
+      else if(setPage===4){if(n<pfRows().length)pfActivate(n);}
       else if(setPage===3){if(n<gpRows().length)gpActivate(n);}
       else if(n<pageRows().length)activateRow(n);
     }
     return;
   }
+  if(state===MENU&&askName)return;                /* the field owns the keys */
   if(state===MENU){
     if(k>='1'&&k<='3'){ac();menuPick(+k-1);return;}
+    if(k==='l'){ac();sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
     if(k===' '||k==='enter'){ac();menuPick(0);return;}
+    return;
+  }
+  if(state===BOARD){
+    if(k==='escape'||k==='p'||k===' '||k==='enter'){toMenu();return;}
+    if(k==='arrowdown')LB.scroll=Math.min(boardMaxScroll(),LB.scroll+LB_RH);
+    if(k==='arrowup')LB.scroll=Math.max(0,LB.scroll-LB_RH);
     return;
   }
   if(state===PICK){
@@ -1454,11 +1788,22 @@ function inRect(r,x,y){return x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;}
 function down(e){
   e.preventDefault();ac();
   var mx=pxFromEvent(e),my=pyFromEvent(e),i;
+  if(state===SETTINGS&&confirmAct){
+    if(inRect(confirmYes(),mx,my)){sfx.pick();doConfirm();return;}
+    if(inRect(confirmNo(),mx,my)){sfx.pick();confirmAct='';return;}
+    return;
+  }
   if(state===SETTINGS){
     if(inRect(GEAR,mx,my)){dragChan=-1;if(setPage)setPage=0;else closeSettings();return;}
     if(setPage===1){
       for(i=0;i<SHIP_THEMES.length;i++)
         if(inRect(swatchRect(i),mx,my)){setShipTheme(i);sfx.pick();setPage=0;return;}
+      if(inRect(backRect(),mx,my))setPage=0;
+      return;
+    }
+    if(setPage===4){
+      for(i=0;i<pfRows().length;i++)
+        if(inRect(pfRect(i),mx,my)){pfActivate(i);return;}
       if(inRect(backRect(),mx,my))setPage=0;
       return;
     }
@@ -1484,9 +1829,27 @@ function down(e){
     for(i=0;i<choices.length;i++){var rc=cardRect(i);if(my>=rc.y&&my<=rc.y+rc.h){applyChoice(i);return;}}
     return;
   }
+  if(state===MENU&&askName){
+    if(inRect(nameFieldRect(),mx,my)){
+      if(nameIn){placeNameInput();try{nameIn.focus();}catch(e){}}
+      return;
+    }
+    if(inRect(nameOkRect(),mx,my)){
+      if(cleanName(nameDraft)){sfx.pick();closeNamePrompt(true);}
+      return;
+    }
+    if(inRect(nameLaterRect(),mx,my)){sfx.pick();closeNamePrompt(false);return;}
+    return;
+  }
   if(state===MENU){
+    if(inRect(lbPanel(),mx,my)){sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
     for(i=0;i<MENU_ITEMS.length;i++)
       if(inRect(menuRect(i),mx,my)){menuPick(i);return;}
+    return;
+  }
+  if(state===BOARD){
+    if(inRect(backRect(),mx,my)){sfx.pick();toMenu();return;}
+    dragBoard=true;dragY=my;dragFrom=LB.scroll;
     return;
   }
   if(state===PICK){
@@ -1501,13 +1864,18 @@ function down(e){
   ptr.active=true;ptr.x=mx;
 }
 function move(e){
+  if(dragBoard){
+    e.preventDefault();
+    LB.scroll=Math.max(0,Math.min(boardMaxScroll(),dragFrom+(dragY-pyFromEvent(e))));
+    return;
+  }
   if(state===SETTINGS){
     if(dragChan>=0){e.preventDefault();chanSet(dragChan,pxFromEvent(e));}
     return;
   }
   if(ptr.active){e.preventDefault();ptr.x=pxFromEvent(e);}
 }
-function up(){ptr.active=false;dragChan=-1;}
+function up(){ptr.active=false;dragChan=-1;dragBoard=false;}
 cv.addEventListener('mousedown',down);cv.addEventListener('mousemove',move);
 window.addEventListener('mouseup',up);
 cv.addEventListener('touchstart',down,{passive:false});
@@ -1566,6 +1934,7 @@ function runOver(reason,explode){
   overReason=reason;
   if(!testRun&&score>best)best=score;
   state=OVER;running=false;MUS.stop();
+  lbSubmit(wi+1,score);
 }
 /* Letting something through is now a failure, not just lost points: three
    leaks ends the run exactly like three collisions would. */
@@ -1763,7 +2132,8 @@ function update(dt){
   if(pendLv>0&&state===PLAY){openLevelUp();return;}
   if(running&&!queue.length&&!aliens.length&&respawnT<=0){
     if(wi+1<MAXWAVE){reward(25*(wi+1));startWave(wi+1);}
-    else{if(!testRun&&score>best)best=score;MUS.stop();sfx.win();state=WIN;running=false;}
+    else{if(!testRun&&score>best)best=score;MUS.stop();sfx.win();state=WIN;running=false;
+      lbSubmit(MAXWAVE,score);}
   }
 }
 
@@ -1803,6 +2173,14 @@ function txtBig(str,x,y,col,k){
   }
 }
 function txtBigW(str,k){return String(str).length*FADV*k-k;}
+/* Same glyphs with a one-pixel skirt behind them. Kept to a single pixel on
+   purpose: at 3x the strokes are already chunky, so anything thicker reads as
+   a second letterform rather than an edge. */
+function txtBigOut(str,x,y,col,edge,k){
+  var d=[[-1,0],[1,0],[0,-1],[0,1],[-1,-1],[1,-1],[-1,1],[1,1]],i;
+  for(i=0;i<d.length;i++)txtBig(str,x+d[i][0],y+d[i][1],edge,k);
+  txtBig(str,x,y,col,k);
+}
 function spr(c,cx,top){ctx.drawImage(c,Math.round(cx-c.width/2),Math.round(top));}
 
 function drawShip(){
@@ -2003,11 +2381,14 @@ var IC_HOME =['....#....','...###...','..#####..','.#######.','#########','..###
 var IC_EYE  =['..#####..','.#.....#.','#..###..#','#.#...#.#','#..###..#','.#.....#.','..#####..'];
 var IC_HIT  =['....#....','..#.#.#..','...###...','.#######.','...###...','..#.#.#..','....#....'];
 var ROWSTYLE={
-  'SOUND OPTIONS':{c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
+  'SOUND':        {c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
   'SPACESHIP':    {c:'#c86bff',t:'#e6b3ff',i:IC_SHIP},
   'GAMEPLAY':     {c:'#ffd34d',t:'#fff3c4',i:IC_STICK},
   'RESTART RUN':  {c:'#e03b3b',t:'#ff9a9a',i:IC_X},
   'MAIN MENU':    {c:'#19d0c8',t:'#9ff4ee',i:IC_HOME},
+  'PLAYER NAME':  {c:'#4fa3ff',t:'#bfe3ff',i:IC_EYE},
+  'PROFILE':      {c:'#19d0c8',t:'#9ff4ee',i:IC_EYE},
+  'BACK':         {c:'#4fc01f',t:'#b9ffa8',i:IC_BACK},
   'RESUME':       {c:'#4fc01f',t:'#b6ffb0',i:IC_PLAY},
   'SOUND':        {c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
   'VOLUME':       {c:'#ffb03a',t:'#ffd9a0',i:IC_VOL},
@@ -2055,6 +2436,17 @@ function drawSettings(){
     return;
   }
 
+  if(setPage===4){                                   /* profile */
+    txtBig('PROFILE',W/2,44,'#ffe066',2);
+    txt('WHO YOU ARE ON THE BOARD',W/2,64,'#3f6490',true);
+    var pr=pfRows();
+    for(i=0;i<pr.length;i++)drawRow(pfRect(i),pr[i][0],pr[i][1]);
+    r=backRect();panel(r,'#3f6490');
+    drawIcon(IC_BACK,r.x+12,r.y+Math.round((r.h-9)/2),'#3f6490');
+    txt('BACK',W/2+8,r.y+10,'#9fd8ff',true);
+    return;
+  }
+
   if(setPage===3){                                   /* gameplay switches */
     txtBig('GAMEPLAY',W/2,44,'#ffe066',2);
     txt('CHANGES HOW THE GAME PLAYS',W/2,64,'#3f6490',true);
@@ -2069,7 +2461,7 @@ function drawSettings(){
   }
 
   if(setPage===2){
-    txtBig('SOUND OPTIONS',W/2,42,'#ffe066',2);
+    txtBig('SOUND',W/2,42,'#ffe066',2);
     for(i=0;i<CHAN.length;i++){
       var cr=chanRect(i),on=chanOn(i),col=on?CHAN[i][1]:'#5a6472';
       panel(cr,col);
@@ -2109,8 +2501,8 @@ function drawSettings(){
   }
   /* anchored under the last row, never on top of it */
   var rb=pageRect(n-1,n),fy=Math.max(rb.y+rb.h+10,H-30);
-  txt('TAP A ROW   P CLOSES',W/2,fy,'#3f6490',true);
-  txt('VOID RUNNER  '+VERSION,W/2,fy+14,'#2e3f58',true);
+  txt('VOID RUNNER  '+VERSION,W/2,fy,'#2e3f58',true);
+  if(confirmAct)drawConfirm();
 }
 function drawRow(r,label,val){
     var st=rowStyle(label);
@@ -2167,23 +2559,11 @@ function render(){
   }
 
   if(state===PICK)drawPick();
+  if(state===BOARD)drawBoard();
   if(state===MENU){
-    txtBig('VOID RUNNER',W/2,12,'#8fe9ff',2);
-    txt('100 WAVES  /  ONE RUN  /  NO RELOAD',W/2,32,'#3f6490',true);
-    txt('THE OPPOSITION',W/2,52,'#5f6a7a',true);
-    ctx.drawImage(TYPES.scout.spr,40-TYPES.scout.w/2,92-TYPES.scout.h);
-    ctx.drawImage(TYPES.drone.spr,128-TYPES.drone.w/2,92-TYPES.drone.h);
-    ctx.drawImage(TYPES.brute.spr,212-TYPES.brute.w/2,92-TYPES.brute.h);
-    txt('SCOUT',40,95,'#4fc01f',true); txt('20HP 2HIT',40,105,'#5f6a7a',true); txt('10 XP',40,115,'#7fb4e8',true);
-    txt('DRONE',128,95,'#c86bff',true);txt('40HP 4HIT',128,105,'#5f6a7a',true);txt('25 XP',128,115,'#7fb4e8',true);
-    txt('BRUTE',212,95,'#ff5555',true);txt('90HP 9HIT',212,105,'#5f6a7a',true);txt('60 XP',212,115,'#7fb4e8',true);
-    ctx.drawImage(ROCKS[3].shapes[0][2],20,130);
-    txt('ROCKS BREAK HARD',54,133,'#a89c8b');
-    txt('DEBRIS HURTS ALIENS',54,145,'#ffb86b');
-    txt('START  1.00x DMG   '+FIRE_RATE.toFixed(1)+' SHOTS/SEC',W/2,164,'#ffe066',true);
-    txt('XP LEVELS YOU UP - PICK 1 OF 3',W/2,178,'#8fe9ff',true);
-    txt('3 PAST YOU AND THE RUN IS OVER',W/2,190,'#7fb4e8',true);
-    txt('ANYTHING TOUCHING COSTS A LIFE',W/2,202,'#ff5555',true);
+    txtBigOut('VOID RUNNER',W/2,menuTop(),'#8fe9ff','#7a2fc4',3);
+    txt('100 WAVES   /   ONE RUN',W/2,menuSubY(),'#3f6490',true);
+    drawBoardBlock();
     for(var mi=0;mi<MENU_ITEMS.length;mi++){
       var mr=menuRect(mi),mc=MENU_ITEMS[mi][1];
       panel(mr,mc);
@@ -2192,10 +2572,10 @@ function render(){
       if(mi===0)drawIcon(IC_PLAY,mr.x+14,icy-4,mc);
       else if(mi===1)drawIcon(IC_EYE,mr.x+14,icy-3,mc);
       else drawGear(mc,mr.x+19,icy);
-      txt(MENU_ITEMS[mi][0],mr.x+Math.round(mr.w/2)+12,icy-3,MENU_ITEMS[mi][1],true);
+      txt(MENU_ITEMS[mi][0],W/2,icy-3,MENU_ITEMS[mi][1],true);
     }
-    txt('TAP  OR  PRESS 1-3   /   M = MUTE',W/2,H-22,'#3f6490',true);
-    if(best)txt('BEST '+best,W/2,H-34,'#5f6a7a',true);
+    txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
+    if(askName)drawNameCard();
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
@@ -2232,6 +2612,9 @@ score=0;lives=START_LIVES;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;game
 fireT=0;bannerT=0;shake=0;invT=0;respawnT=0;conc=2;gap=1.6;spawnT=0;mplan=null;mT=0;
 alarmT=0;lvlFlash=0;
 blockT=0;curw=waveDef(0);level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
+/* First visit: ask who they are, over the menu, with Later always available. */
+if(!playerName)openNamePrompt();
+lbLoad();
 requestAnimationFrame(frame);
 })();
 </script>
