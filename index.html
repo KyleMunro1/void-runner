@@ -891,7 +891,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.86';
+var VERSION='V1.87';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -2200,9 +2200,10 @@ function drawBoardBlock(){
 var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#c86bff'],
                 ['DEMO MODE','#ff9a2e'],['SETTINGS','#ff6b6b']];
 /* The hull button is the one row whose frame and whose contents are coloured
-   separately: the frame keeps the purple that settings used to wear, while the
-   ship and its label are painted in the hull you chose. Settings takes a red
-   at the same brightness the purple had, so the set keeps its even weight. */
+   separately: the frame AND the label keep the purple that settings used to
+   wear, and the hull you chose shows only in the ship sprite itself. Settings
+   takes a red at the same brightness the purple had, so the set keeps its
+   even weight. */
 function menuChrome(i){return MENU_ITEMS[i][1];}
 function menuContent(i){
   return MENU_ITEMS[i][0]==='SPACESHIP'?SHIP_THEMES[shipTheme].B:MENU_ITEMS[i][1];
@@ -3644,7 +3645,10 @@ function render(){
       else if(mlab==='SPACESHIP')
         ctx.drawImage(SHIP_THEMES[shipTheme].icon,mr.x+11,icy-8);
       else drawGear(co,mr.x+19,icy);
-      txt(mlab,W/2,icy-3,co,true);
+      /* The label takes the frame colour on every row. They are the same value
+         everywhere except the hull button, where the chosen colour is carried
+         by the ship sprite alone. */
+      txt(mlab,W/2,icy-3,ch,true);
     }
     txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
     /* Dimmer than the name above it, so it reads as a footnote. */
