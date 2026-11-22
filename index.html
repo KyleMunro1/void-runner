@@ -772,7 +772,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.76';
+var VERSION='V1.77';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1810,7 +1810,7 @@ function lbRecover(code){
   }
   try{
     if(typeof setTimeout==='function')t=setTimeout(function(){finish(null);},8000);
-    fetch('/api/scores?v='+majorVer(),{method:'GET'})
+    fetch('/api/scores?v='+BOARD_ERA,{method:'GET'})
       .then(function(r){return r.json();})
       .then(finish)
       .catch(function(){finish(null);});
@@ -1907,16 +1907,20 @@ function lbLoad(era){
      truth. The local row is still the fallback when the fetch fails. */
   if(!canFetch()){lbFallback();return;}
   LB.busy=true;
-  var done=false,t=null;
+  var done=false,t=null,want=LB.era;      /* the tab this reply belongs to */
   function finish(d){
     if(done)return;
-    done=true;LB.busy=false;
+    done=true;
     if(t!==null&&typeof clearTimeout==='function')clearTimeout(t);
+    /* Tab changed while this was in flight: a newer request owns the board,
+       so drop this reply rather than painting one era's rows under another. */
+    if(want!==LB.era)return;
+    LB.busy=false;
     if(!d||!lbApply(d))lbFallback();
   }
   try{
     if(typeof setTimeout==='function')t=setTimeout(function(){finish(null);},8000);
-    fetch('/api/scores?v='+BOARD_ERA,{method:'GET'})
+    fetch('/api/scores?v='+majorVer(),{method:'GET'})
       .then(function(r){return r.json();})
       .then(finish)
       .catch(function(){finish(null);});
