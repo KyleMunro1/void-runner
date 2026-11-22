@@ -772,7 +772,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.74';
+var VERSION='V1.76';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -844,14 +844,21 @@ function upById(id){
    nothing, so these two now roll their own odds for a slot. */
 var P_SHIELD=0.25, P_LIFE=0.08;
 /* Luck drains weight out of COMMON and pushes it up the tiers. At 0% this is
-   exactly 75/20/4.5/0.5, and luck is what pushes it upward from there. The
-   common floor stops it becoming a guaranteed-jackpot machine. */
+   exactly 75/20/4.5/0.5.
+   It used to stop meaning much past about 90%: the common drain was capped,
+   so the only thing left growing was a linear nudge to the upper tiers and
+   INSANITY crawled from 3.7% at 100% luck to 6.6% at 1000%.
+   Common now decays geometrically - always positive, never capped - and the
+   top two tiers grow with a square term, so every point of luck keeps paying
+   and a heavily invested run really does turn into a jackpot machine. The
+   0-100% range is left almost exactly where it was, so nobody's current
+   build changes under them. */
 function rarityWeights(){
   var L=upLuck/100;
-  return [75 *(1-Math.min(0.80,L*0.90)),
+  return [75 *Math.pow(0.30,L),
           20 *(1+L*0.80),
-          4.5*(1+L*2.00),
-          0.5*(1+L*4.00)];
+          4.5*(1+L*2.20+L*L*0.35),
+          0.5*(1+L*4.00+L*L*1.60)];
 }
 function rollRarity(){
   var w=rarityWeights(),tot=w[0]+w[1]+w[2]+w[3],r=Math.random()*tot,acc=0;
@@ -1809,15 +1816,22 @@ function lbRecover(code){
       .catch(function(){finish(null);});
   }catch(e){finish(null);}
 }
-function majorVer(){
-  var m=String(VERSION).replace(/[^0-9.]/g,'').split('.')[0];
-  return m||'1';
-}
+/* The board's era, deliberately NOT the version string. Cosmetic releases
+   and bug fixes keep their scores; a release that changes what the game asks
+   of a player starts a fresh table, and the old one stays readable beside it.
+   Era 1 is everything up to V1.73 - three enemy kinds and the old curve.
+   Era 2 begins at V1.74, where a new alien unlocks after every boss. */
+var BOARD_ERA='2', PREV_ERA='1';
+function majorVer(){return LB.era||BOARD_ERA;}
+function eraName(e){return e===BOARD_ERA?'CURRENT':'PREPATCH';}
+/* Your own run belongs to the current era, so it is only ever merged into
+   that board - never onto the prepatch one, which is now frozen history. */
+function viewingCurrent(){return (LB.era||BOARD_ERA)===BOARD_ERA;}
 
 /* rows: [{id,name,wave,score,ship}]. mode: 'live' once the server answers,
    'local' when it cannot be reached, which is every artifact view since those
    pages are not allowed to call out. */
-var LB={rows:[],mode:'local',busy:false,err:'',scroll:0};
+var LB={rows:[],mode:'local',busy:false,err:'',scroll:0,era:'2'};
 
 function lbBest(){
   try{return JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){return null;}
@@ -1846,7 +1860,7 @@ function lbRememberLocal(wave,score){
    after a run until something happened to reload it. */
 var myRow=null;
 function lbMergeMine(rows){
-  if(!myRow||!rows)return rows;
+  if(!myRow||!rows||!viewingCurrent())return rows;
   var i,at=-1;
   for(i=0;i<rows.length;i++)if(rows[i].id===playerId){at=i;break;}
   if(at<0)rows.push(myRow);
@@ -1879,12 +1893,13 @@ function lbRefreshSoon(){
   for(i=0;i<tries.length;i++)setTimeout(lbLoad,tries[i]);
 }
 function lbFallback(){
-  if(LB.mode!=='live'){LB.rows=lbLocalRows();LB.mode='local';}
+  if(LB.mode!=='live'){LB.rows=viewingCurrent()?lbLocalRows():[];LB.mode='local';}
 }
 /* The board is a nice-to-have: nothing in here may ever stop the game
    starting, so every call is guarded and failure just means a local board. */
 function canFetch(){return typeof fetch==='function';}
-function lbLoad(){
+function lbLoad(era){
+  if(era&&era!==LB.era){LB.era=era;LB.rows=[];LB.mode='local';LB.scroll=0;LB.busy=false;}
   if(LB.busy)return;
   /* No optimistic local row up front. It was drawn from the CURRENT hull and
      name, so the board flashed your run in the wrong colour for a moment and
@@ -1901,7 +1916,7 @@ function lbLoad(){
   }
   try{
     if(typeof setTimeout==='function')t=setTimeout(function(){finish(null);},8000);
-    fetch('/api/scores?v='+majorVer(),{method:'GET'})
+    fetch('/api/scores?v='+BOARD_ERA,{method:'GET'})
       .then(function(r){return r.json();})
       .then(finish)
       .catch(function(){finish(null);});
@@ -1923,7 +1938,7 @@ function lbSubmit(wave,score){
   try{
     fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({id:playerId,name:playerName||'ANON',wave:wave,score:score,
-                           ship:SHIP_THEMES[shipTheme].k,v:majorVer()})})
+                           ship:SHIP_THEMES[shipTheme].k,v:BOARD_ERA})})
       .then(function(r){return r.json();})
       .then(function(d){if(!lbApply(d))lbFallback();})
       .catch(function(){lbFallback();});
@@ -2041,7 +2056,7 @@ function menuRect(i){
 function menuGapTop(){return menuStackEnd()+8;}
 function toMenu(){
   state=MENU;setPage=0;pickBuf='';running=false;confirmAct='';MUS.stop();
-  lbLoad();
+  lbLoad(BOARD_ERA);                /* the menu is always the live board */
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];dnums=[];
   bannerT=0;alarmT=0;shake=0;
 }
@@ -2208,7 +2223,14 @@ function closeNamePrompt(save){
 }
 
 /* ================= full leaderboard ================= */
-function boardRowRect(i){return {x:16,y:76+i*LB_RH-LB.scroll,w:W-32,h:LB_RH};}
+/* Two tabs across the top of the full board: the live table, and the frozen
+   one from before the roster patch. */
+var BOARD_TABS=[['CURRENT','2'],['PREPATCH','1']];
+function boardTabRect(i){
+  var gap=8,w=Math.round((W-32-gap)/2);
+  return {x:16+i*(w+gap),y:40,w:w,h:18};
+}
+function boardRowRect(i){return {x:16,y:92+i*LB_RH-LB.scroll,w:W-32,h:LB_RH};}
 /* BACK and REFRESH share the footer row the back button used to have. */
 function boardBackRect(){var r=backRect();return {x:r.x,y:r.y,w:Math.round((r.w-10)/2),h:r.h};}
 function boardRefreshRect(){
@@ -2216,17 +2238,27 @@ function boardRefreshRect(){
   return {x:b.x+b.w+10,y:r.y,w:r.w-b.w-10,h:r.h};
 }
 function boardMaxScroll(){
-  var visible=H-76-56;
+  var visible=H-92-56;
   return Math.max(0,LB.rows.length*LB_RH-visible);
 }
 function drawBoard(){
-  txtBig('LEADERBOARD',W/2,22,'#ffe066',2);
-  txt(LB.mode==='live'?('VERSION '+majorVer()+'  -  '+LB.rows.length+' RUNNERS')
-                      :'OFFLINE  -  THIS DEVICE ONLY',W/2,46,'#3f6490',true);
-  var top=70,bot=H-56;
+  txtBig('LEADERBOARD',W/2,18,'#ffe066',2);
+  var ti,tr,on;
+  for(ti=0;ti<BOARD_TABS.length;ti++){
+    tr=boardTabRect(ti);on=(LB.era===BOARD_TABS[ti][1]);
+    panel(tr,on?C_GOLD:'#2b3340',on?'#1a1608':'#0a0f1c');
+    txt(BOARD_TABS[ti][0],tr.x+Math.round(tr.w/2),tr.y+Math.round((tr.h-FH)/2),
+        on?C_GOLD:'#5f6a7a',true);
+  }
+  txt(LB.mode==='live'
+        ? (viewingCurrent()?(LB.rows.length+' RUNNERS')
+                           :(LB.rows.length+' RUNNERS  -  BEFORE THE ROSTER PATCH'))
+        :'OFFLINE  -  THIS DEVICE ONLY',W/2,64,'#3f6490',true);
+  var top=86,bot=H-56;
   ctx.save();ctx.beginPath();ctx.rect(0,top,W,bot-top);ctx.clip();
   if(!LB.rows.length){
-    txt(LB.busy?'LOADING':'NO RUNS YET',W/2,top+30,'#3f6490',true);
+    txt(LB.busy?'LOADING':(viewingCurrent()?'NO RUNS YET':'NOTHING HERE'),
+        W/2,top+30,'#3f6490',true);
   }else{
     for(var i=0;i<LB.rows.length;i++){
       var r=boardRowRect(i);
@@ -2340,6 +2372,8 @@ window.addEventListener('keydown',function(e){
   }
   if(state===BOARD){
     if(k==='r'){if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}return;}
+    if(k==='1'||k==='2'){var tg=(k==='1')?BOARD_ERA:PREV_ERA;
+      if(LB.era!==tg){sfx.pick();lbPoll=LB_POLL;lbLoad(tg);}return;}
     if(k==='escape'||k==='p'||k===' '||k==='enter'){toMenu();return;}
     if(k==='arrowdown')LB.scroll=Math.min(boardMaxScroll(),LB.scroll+LB_RH);
     if(k==='arrowup')LB.scroll=Math.max(0,LB.scroll-LB_RH);
@@ -2470,11 +2504,16 @@ function down(e){
     return;
   }
   if(state===BOARD){
+    for(i=0;i<BOARD_TABS.length;i++)
+      if(inRect(boardTabRect(i),mx,my)){
+        if(LB.era!==BOARD_TABS[i][1]){sfx.pick();lbPoll=LB_POLL;lbLoad(BOARD_TABS[i][1]);}
+        return;
+      }
     if(inRect(boardRefreshRect(),mx,my)){
       if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}
       return;
     }
-    if(inRect(boardBackRect(),mx,my)){sfx.pick();toMenu();return;}
+    if(inRect(boardBackRect(),mx,my)){sfx.pick();toMenu();return;}  /* resets the era */
     dragBoard=true;dragY=my;dragFrom=LB.scroll;
     return;
   }
