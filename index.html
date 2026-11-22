@@ -585,6 +585,11 @@ for(var rw=0;rw<ROCKS.length;rw++)ROCK_TOTAL+=ROCKS[rw].weight;
 /* ================= player / weapon ================= */
 var DMG=10,FIRE_RATE=8,BULLET_SPD=Math.round(270*VS);
 var SHIP_SPD=360,SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=5,INVULN=2.0;
+/* A card screen can land with a rock already on top of you, and the time
+   spent reading three cards is time you could not spend dodging. Half a
+   second back on the other side is enough to move out of the way and not
+   enough to walk through anything. */
+var LVL_INVULN=0.5;
 /* The spawn fairness guard keeps the OLD 240 budget on purpose: the faster keys
    are a pure buff, not an excuse to spawn tighter patterns. */
 var GUARD_SPD=240;
@@ -602,7 +607,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.66';
+var VERSION='V1.69';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -904,7 +909,7 @@ var score,lives,leaked,kills,shots,hits,dodged,broken,gameT;
 var shocks=[];
 var alarmT,overReason='';
 var lvlFlash=0,running=false;
-var fireT,banner,bannerT,shake,invT,respawnT,best=0,setPage=0;
+var fireT,banner,bannerT,shake,invT,lvlInvT,respawnT,best=0,setPage=0;
 var keys={},ptr={active:false,x:W/2};
 var dragBoard=false,dragY=0,dragFrom=0;
 
@@ -1096,6 +1101,9 @@ function applyChoice(i){
   if(state!==LEVELUP||!choices||!choices[i])return;
   var c=choices[i];
   grantUpgrade(c.u,c.r);
+  /* Not while auto levelling: that reads the card for you in no time at all,
+     and at high luck it fires often enough that the grace would be permanent. */
+  if(!autoLevel){invT=Math.max(invT,LVL_INVULN);lvlInvT=LVL_INVULN;}
   pendLv--;choices=null;sfx.pick();
   if(pendLv>0)openLevelUp();else state=PLAY;
 }
@@ -1153,7 +1161,7 @@ function reset(){
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];
   score=0;lives=START_LIVES;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
   alarmT=0;dnums=[];overReason='';lvlFlash=0;
-  fireT=0;shake=0;invT=INVULN;respawnT=0;blockT=0;
+  fireT=0;shake=0;invT=INVULN;lvlInvT=0;respawnT=0;blockT=0;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
   upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];
   startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;confirmAct='';
@@ -1534,23 +1542,64 @@ function majorVer(){
    pages are not allowed to call out. */
 var LB={rows:[],mode:'local',busy:false,err:'',scroll:0};
 
+function lbBest(){
+  try{return JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){return null;}
+}
+/* The hull is stored WITH the run that earned it. Reading the current colour
+   instead meant repainting your ship silently recoloured a record set in a
+   different one. */
 function lbLocalRows(){
-  var best=null;
-  try{best=JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){}
-  if(!best)return [];
-  return [{id:playerId,name:playerName||'YOU',wave:best.wave,score:best.score,
-           ship:SHIP_THEMES[shipTheme].k}];
+  var b=lbBest();
+  if(!b)return [];
+  return [{id:playerId,name:playerName||'YOU',wave:b.wave,score:b.score,
+           ship:b.ship||SHIP_THEMES[shipTheme].k}];
 }
 function lbRememberLocal(wave,score){
-  var cur=null;
-  try{cur=JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){}
+  var cur=lbBest();
   if(!cur||wave>cur.wave||(wave===cur.wave&&score>cur.score)){
-    try{localStorage.setItem('vr_best',JSON.stringify({wave:wave,score:score}));}catch(e){}
+    cur={wave:wave,score:score,ship:SHIP_THEMES[shipTheme].k};
+    try{localStorage.setItem('vr_best',JSON.stringify(cur));}catch(e){}
   }
+  return cur;
+}
+/* The run just finished on this device, held until the board reports it back
+   by itself. The write lands before the key listing catches up, so the POST's
+   own echo of the board - and a GET a second behind it - can both come back
+   without the row that was just written. That is what left the board empty
+   after a run until something happened to reload it. */
+var myRow=null;
+function lbMergeMine(rows){
+  if(!myRow||!rows)return rows;
+  var i,at=-1;
+  for(i=0;i<rows.length;i++)if(rows[i].id===playerId){at=i;break;}
+  if(at<0)rows.push(myRow);
+  else if(myRow.wave>rows[at].wave||
+         (myRow.wave===rows[at].wave&&myRow.score>rows[at].score))rows[at]=myRow;
+  rows.sort(function(a,b){return (b.wave-a.wave)||(b.score-a.score)||((a.at||0)-(b.at||0));});
+  return rows;
 }
 function lbApply(data){
-  if(data&&data.ok&&data.rows){LB.rows=data.rows;LB.mode='live';LB.err='';return true;}
+  if(data&&data.ok&&data.rows){
+    LB.rows=lbMergeMine(data.rows);LB.mode='live';LB.err='';return true;
+  }
   return false;
+}
+/* Ask again a few times after a submit, so the board converges on its own
+   instead of waiting for the player to go and poke it. */
+/* Other people's runs land on the board while you are sitting looking at it.
+   Without this the board only reloaded when you navigated to it, so a friend
+   finishing a run went unseen until the app was closed and reopened. */
+var LB_POLL=20,lbPoll=LB_POLL;
+function lbTick(dt){
+  if(state===MENU||state===BOARD){
+    lbPoll-=dt;
+    if(lbPoll<=0){lbPoll=LB_POLL;lbLoad();}
+  } else lbPoll=LB_POLL;
+}
+function lbRefreshSoon(){
+  if(typeof setTimeout!=='function')return;
+  var tries=[1500,4000,9000],i;
+  for(i=0;i<tries.length;i++)setTimeout(lbLoad,tries[i]);
 }
 function lbFallback(){
   if(LB.mode!=='live'){LB.rows=lbLocalRows();LB.mode='local';}
@@ -1560,8 +1609,11 @@ function lbFallback(){
 function canFetch(){return typeof fetch==='function';}
 function lbLoad(){
   if(LB.busy)return;
-  lbFallback();
-  if(!canFetch())return;
+  /* No optimistic local row up front. It was drawn from the CURRENT hull and
+     name, so the board flashed your run in the wrong colour for a moment and
+     then corrected itself the instant the server answered. LOADING, then the
+     truth. The local row is still the fallback when the fetch fails. */
+  if(!canFetch()){lbFallback();return;}
   LB.busy=true;
   var done=false,t=null;
   function finish(d){
@@ -1583,6 +1635,14 @@ function lbLoad(){
 function lbSubmit(wave,score){
   lbRememberLocal(wave,score);
   if(testRun||!canFetch())return;
+  /* Show it straight away, but show the BEST run this device knows about,
+     not necessarily the one just finished: a worse run must not repaint the
+     record that is still standing. */
+  var b=lbBest()||{wave:wave,score:score,ship:SHIP_THEMES[shipTheme].k};
+  myRow={id:playerId,name:playerName||'ANON',wave:b.wave,score:b.score,
+         ship:b.ship||SHIP_THEMES[shipTheme].k,at:Date.now()};
+  LB.rows=lbMergeMine(LB.rows?LB.rows.slice():[]);
+  lbRefreshSoon();
   try{
     fetch('/api/scores',{method:'POST',headers:{'Content-Type':'application/json'},
       body:JSON.stringify({id:playerId,name:playerName||'ANON',wave:wave,score:score,
@@ -1872,6 +1932,12 @@ function closeNamePrompt(save){
 
 /* ================= full leaderboard ================= */
 function boardRowRect(i){return {x:16,y:76+i*LB_RH-LB.scroll,w:W-32,h:LB_RH};}
+/* BACK and REFRESH share the footer row the back button used to have. */
+function boardBackRect(){var r=backRect();return {x:r.x,y:r.y,w:Math.round((r.w-10)/2),h:r.h};}
+function boardRefreshRect(){
+  var r=backRect(),b=boardBackRect();
+  return {x:b.x+b.w+10,y:r.y,w:r.w-b.w-10,h:r.h};
+}
 function boardMaxScroll(){
   var visible=H-76-56;
   return Math.max(0,LB.rows.length*LB_RH-visible);
@@ -1898,9 +1964,13 @@ function drawBoard(){
     ctx.fillStyle='#13325e';ctx.fillRect(W-5,top,2,bot-top);
     ctx.fillStyle='#4fa3ff';ctx.fillRect(W-5,top+tr,2,th);
   }
-  var br=backRect();panel(br,'#3f6490');
-  drawIcon(IC_BACK,br.x+12,br.y+Math.round((br.h-9)/2),'#3f6490');
-  txt('BACK',W/2+8,br.y+10,'#9fd8ff',true);
+  var bb=boardBackRect(),rr2=boardRefreshRect();
+  panel(bb,'#3f6490');
+  drawIcon(IC_BACK,bb.x+8,bb.y+Math.round((bb.h-9)/2),'#3f6490');
+  txt('BACK',bb.x+Math.round(bb.w/2)+6,bb.y+10,'#9fd8ff',true);
+  panel(rr2,LB.busy?'#2b3340':'#4fa3ff');
+  txt(LB.busy?'LOADING':'REFRESH',rr2.x+Math.round(rr2.w/2),rr2.y+10,
+      LB.busy?'#4a5260':'#9fd8ff',true);
 }
 
 /* ================= wave picker ================= */
@@ -1945,6 +2015,14 @@ function drawPick(){
 }
 
 /* ================= input ================= */
+/* Coming back to a backgrounded tab or a reopened home-screen app: catch up
+   at once rather than waiting out the poll. */
+try{
+  if(typeof document!=='undefined'&&document.addEventListener)
+    document.addEventListener('visibilitychange',function(){
+      if(!document.hidden&&(state===MENU||state===BOARD)){lbPoll=LB_POLL;lbLoad();}
+    });
+}catch(e){}
 window.addEventListener('keydown',function(e){
   /* A and D steer the ship, so the game used to swallow them before the name
      field ever saw them: typing an A did nothing. While the field is up the
@@ -1984,6 +2062,7 @@ window.addEventListener('keydown',function(e){
     return;
   }
   if(state===BOARD){
+    if(k==='r'){if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}return;}
     if(k==='escape'||k==='p'||k===' '||k==='enter'){toMenu();return;}
     if(k==='arrowdown')LB.scroll=Math.min(boardMaxScroll(),LB.scroll+LB_RH);
     if(k==='arrowup')LB.scroll=Math.max(0,LB.scroll-LB_RH);
@@ -2114,7 +2193,11 @@ function down(e){
     return;
   }
   if(state===BOARD){
-    if(inRect(backRect(),mx,my)){sfx.pick();toMenu();return;}
+    if(inRect(boardRefreshRect(),mx,my)){
+      if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}
+      return;
+    }
+    if(inRect(boardBackRect(),mx,my)){sfx.pick();toMenu();return;}
     dragBoard=true;dragY=my;dragFrom=LB.scroll;
     return;
   }
@@ -2256,6 +2339,7 @@ function update(dt){
   if(shake>0)shake=Math.max(0,shake-dt*14);
   if(alarmT>0)alarmT=Math.max(0,alarmT-dt);
   if(lvlFlash>0)lvlFlash=Math.max(0,lvlFlash-dt);
+  lbTick(dt);
   /* The clock behind every animation. It used to stop dead outside PLAY, which
      froze the rainbow on the level-up screen and left the text caret stuck
      mid-blink on the name and code cards. Every gameplay use of it is a
@@ -2277,6 +2361,7 @@ function update(dt){
   }
   if(bannerT>0)bannerT-=dt;
   if(invT>0)invT-=dt;
+  if(lvlInvT>0)lvlInvT=Math.max(0,lvlInvT-dt);
 
   /* ---- ship ---- */
   var shipPrevX=ship.x;
@@ -2461,13 +2546,30 @@ function txtBigOut(str,x,y,col,edge,k){
 }
 function spr(c,cx,top){ctx.drawImage(c,Math.round(cx-c.width/2),Math.round(top));}
 
+/* The hull in moving colour, one sprite pixel at 2x like the real sprite.
+   Deliberately not the blink you get after being hit: the two mean different
+   things and should not look the same. */
+function drawShipRainbow(){
+  var x0=Math.round(ship.x-SHIP_W/2),r,c,hue;
+  for(r=0;r<SHIP.length;r++){
+    hue=Math.floor((r/SHIP.length*300+gameT*520)%360);
+    ctx.fillStyle='hsl('+hue+',100%,66%)';
+    for(c=0;c<SHIP[r].length;c++){
+      if(SHIP[r].charAt(c)==='.')continue;
+      ctx.fillRect(x0+c*2,SHIP_Y+r*2,2,2);
+    }
+  }
+}
 function drawShip(){
   if(respawnT>0)return;
-  if(invT>0&&Math.floor(invT*12)%2===0)return;
+  /* The level-up grace shows as colour, so the ship stays solid through it
+     even though the post-hit blink would otherwise be hiding it. */
+  if(lvlInvT<=0&&invT>0&&Math.floor(invT*12)%2===0)return;
   var f=Math.random();
   ctx.fillStyle='#ff8a2b';ctx.fillRect(Math.round(ship.x)-4,SHIP_Y+SHIP_H-2,8,3+Math.round(f*5));
   ctx.fillStyle='#ffe066';ctx.fillRect(Math.round(ship.x)-2,SHIP_Y+SHIP_H-2,4,2+Math.round(f*3));
   spr(SHIP_SPR,ship.x,SHIP_Y);
+  if(lvlInvT>0)drawShipRainbow();
 }
 function eatDisc(r,cx,cy,rad){
   var ri=Math.ceil(rad),rr2=rad*rad,lim=(r.r-0.4)*(r.r-0.4);
@@ -2923,7 +3025,7 @@ function frame(now){
 }
 ship={x:W/2};aliens=[];bullets=[];rocks=[];parts=[];queue=[];wi=0;
 score=0;lives=START_LIVES;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
-fireT=0;bannerT=0;shake=0;invT=0;respawnT=0;conc=2;gap=1.6;spawnT=0;mplan=null;mT=0;
+fireT=0;bannerT=0;shake=0;invT=0;lvlInvT=0;respawnT=0;conc=2;gap=1.6;spawnT=0;mplan=null;mT=0;
 alarmT=0;lvlFlash=0;
 blockT=0;curw=waveDef(0);level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
 /* First visit: ask who they are, over the menu, with Later always available. */

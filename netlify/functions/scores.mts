@@ -11,7 +11,13 @@ import type { Config, Context } from "@netlify/functions";
  * Scores are keyed under the game's MAJOR version, so a rebalance starts a
  * clean table instead of leaving old runs sitting on top of it forever. */
 
-const STORE = "voidrunner-scores";
+/* Blobs default to eventual consistency: a write is durable at once, but the
+ * key listing can take up to a minute to catch up. That meant a player's own
+ * POST read back a board that did not yet contain the run it had just
+ * written, so the board came back empty straight after a run and only filled
+ * in later. Strong consistency costs a slower read and is worth it for a
+ * handful of rows fetched once per menu. */
+const STORE = { name: "voidrunner-scores", consistency: "strong" as const };
 const MAX_ROWS = 200;
 const NAME_MAX = 14;
 
@@ -108,12 +114,15 @@ export default async (req: Request, _context: Context) => {
       const store = getStore(STORE);
       const key = `v${major}/${id}`;
       const prev = (await store.get(key, { type: "json" })) as Row | null;
-      /* Keep the better run, but always take the newest name and ship so
-       * renaming yourself or repainting the hull shows up on the board. */
+      /* Keep the better run. A name is who you are, so it follows you onto
+       * whatever run is on the board; a hull belongs to the run that earned
+       * the place, so repainting and then posting a WORSE run must not
+       * recolour the record that is still standing. The colour changes when,
+       * and only when, a better run replaces it. */
       if (better(row, prev)) {
         await store.setJSON(key, row);
-      } else if (prev && (prev.name !== row.name || prev.ship !== row.ship)) {
-        await store.setJSON(key, { ...prev, name: row.name, ship: row.ship });
+      } else if (prev && prev.name !== row.name) {
+        await store.setJSON(key, { ...prev, name: row.name });
       }
       return Response.json({ ok: true, rows: await readBoard(major) });
     } catch (err) {
