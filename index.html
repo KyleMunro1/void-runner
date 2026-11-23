@@ -1020,7 +1020,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.33';
+var VERSION='V2.34';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -2491,10 +2491,18 @@ function lbLoad(era){
   }catch(e){finish(null);}
 }
 /* Test runs from the wave picker never post: they start pre-levelled, so they
-   are not comparable with a run played from wave 1. */
+   are not comparable with a run played from wave 1.
+   They must not be REMEMBERED either, and that was the harder half. This used
+   to remember first and check testRun second, so a demo run wrote its wave
+   and score into vr_best as the device's honest record. It never posted - but
+   everything downstream reads that record rather than the run just finished.
+   The next real run drew its own board row from it, and lbReconcile would see
+   the board holding less than the device remembered and push the demo's
+   numbers up as a correction. A wave-20 run came back as wave 100. */
 function lbSubmit(wave,score){
+  if(testRun)return;
   lbRememberLocal(wave,score);
-  if(testRun||!canFetch())return;
+  if(!canFetch())return;
   /* Show it straight away, but show the BEST run this device knows about,
      not necessarily the one just finished: a worse run must not repaint the
      record that is still standing. */

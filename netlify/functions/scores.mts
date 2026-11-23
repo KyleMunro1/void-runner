@@ -61,6 +61,27 @@ function better(next: Row, prev: Row | null): boolean {
   return next.score > prev.score;
 }
 
+/* A one-off removal, and the only way one exists: there is no delete route,
+ * and a POST is accepted only if it BEATS the stored row, so a row that
+ * should never have been written cannot be taken back from the client.
+ *
+ * This row is a demo run. The client used to remember a run before checking
+ * whether it was a test, so a demo wrote itself into the device's record and
+ * the next real run handed the board the demo's numbers. A demo jumped to
+ * wave 79 starts on 273,754 and this row banked 275,937 - a few kills past
+ * the jump - where a run genuinely played from wave 1 to 79 banks 361,900.
+ *
+ * Matched on what the board already shows in public, NOT on the player's id:
+ * ids double as recovery codes and one must never sit in a public repo.
+ * Idempotent - once the row is gone this matches nothing, forever - and it
+ * rides along with the read that was happening anyway, so it costs no extra
+ * fetches. Safe to delete this block once it has run. */
+const PURGE = { major: "4", name: "SOFIHATTA", wave: 79, score: 275937 };
+function isPurged(major: string, row: Row) {
+  return major === PURGE.major && row.name === PURGE.name &&
+         row.wave === PURGE.wave && row.score === PURGE.score;
+}
+
 async function readBoard(major: string) {
   const store = getStore(STORE);
   const prefix = `v${major}/`;
@@ -68,7 +89,9 @@ async function readBoard(major: string) {
   const rows = await Promise.all(
     blobs.slice(0, MAX_ROWS).map(async (b) => {
       const row = (await store.get(b.key, { type: "json" })) as Row | null;
-      return row ? { ...row, id: b.key.slice(prefix.length) } : null;
+      if (!row) return null;
+      if (isPurged(major, row)) { await store.delete(b.key); return null; }
+      return { ...row, id: b.key.slice(prefix.length) };
     })
   );
   return rows
