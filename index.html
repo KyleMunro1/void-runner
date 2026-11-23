@@ -628,42 +628,42 @@ var TYPES={
      two waves and two levels - they are numerous enough early that 20% each
      compounds - so they round DOWN. Everything else lands within 7% of the
      time-to-kill it had before. */
-  scout:{spr:mk(SCOUT),rows:SCOUT,hp:2,spd:46*VS,xp:10,col:'#4fc01f',
+  scout:{spr:mk(SCOUT),rows:SCOUT,hp:20,spd:46*VS,xp:10,col:'#4fc01f',
          dth:'A SCOUT RAN YOU DOWN'},
-  drone:{spr:mk(DRONE),rows:DRONE,hp:5,spd:34*VS,xp:25,col:'#c86bff',dth:'A DRONE RAN YOU DOWN'},
-  brute:{spr:mk(BRUTE),rows:BRUTE,hp:11,spd:24*VS,xp:60,col:'#ff5555',
+  drone:{spr:mk(DRONE),rows:DRONE,hp:50,spd:34*VS,xp:25,col:'#c86bff',dth:'A DRONE RAN YOU DOWN'},
+  brute:{spr:mk(BRUTE),rows:BRUTE,hp:110,spd:24*VS,xp:60,col:'#ff5555',
          maxOn:6,dth:'A BRUTE RAN YOU DOWN'},
   /* --- unlocked one at a time, each after a boss falls --- */
-  mite:    {spr:mk(MITE),    rows:MITE,    hp:2, spd:78*VS,xp:14, col:'#ffd34d',
+  mite:    {spr:mk(MITE),    rows:MITE,    hp:20, spd:78*VS,xp:14, col:'#ffd34d',
             dth:'A MITE RAN YOU DOWN'},
   /* the splitter already has a trick of its own, so it travels plainly */
-  splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:8, spd:30*VS,xp:45, col:'#c8ff4d',
+  splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:80, spd:30*VS,xp:45, col:'#c8ff4d',
             splits:2,maxOn:4,dth:'A SPLITTER RAN YOU DOWN'},
   /* stair: crosses the screen, drops a step at the wall, comes back. It
      barely descends on its own, so it sits in your way rather than falling
      past you - the shield makes that genuinely awkward. */
-  bulwark: {spr:mk(BULWARK), rows:BULWARK, hp:6, spd:26*VS,xp:75, col:'#19d0c8',
-            shield:7,maxOn:4,stair:96,step:44,dth:'A BULWARK RAN YOU DOWN'},
+  bulwark: {spr:mk(BULWARK), rows:BULWARK, hp:60, spd:26*VS,xp:75, col:'#19d0c8',
+            shield:70,maxOn:4,stair:96,step:44,dth:'A BULWARK RAN YOU DOWN'},
   /* shove: it comes down hard enough to barge whatever is in the way out of
      its path, which opens lanes you were not expecting */
-  diver:   {spr:mk(DIVER),   rows:DIVER,   hp:6, spd:26*VS,xp:55, col:'#e8f2ff',
+  diver:   {spr:mk(DIVER),   rows:DIVER,   hp:60, spd:26*VS,xp:55, col:'#e8f2ff',
             accel:3.0,shove:170,dth:'A DIVER RAN YOU DOWN'},
   /* drift: slides sideways while it descends, turning at the walls. The one
      kind that weaves, for now - the others each have a trick already. */
-  carapace:{spr:mk(CARAPACE),rows:CARAPACE,hp:11, spd:22*VS,xp:90, col:'#19d0c8',
-            dr:0.6,maxOn:4,drift:22,dth:'A CARAPACE RAN YOU DOWN'},
+  carapace:{spr:mk(CARAPACE),rows:CARAPACE,hp:110, spd:22*VS,xp:90, col:'#19d0c8',
+            dr:6,maxOn:4,drift:22,dth:'A CARAPACE RAN YOU DOWN'},
   /* the knitter stitches its NEIGHBOURS back together, not just itself, so
      leaving one alive quietly undoes the damage you are doing to everything
      around it. Kill it first or kill nothing. */
-  knitter: {spr:mk(KNITTER), rows:KNITTER, hp:10, spd:28*VS,xp:85, col:'#ff5fd2',
+  knitter: {spr:mk(KNITTER), rows:KNITTER, hp:100, spd:28*VS,xp:85, col:'#ff5fd2',
             regen:0.020,heal:0.055,healR:64,dth:'A KNITTER RAN YOU DOWN'},
   /* phasing is its whole character; it just spends less time untouchable */
-  phantom: {spr:mk(PHANTOM), rows:PHANTOM, hp:9, spd:36*VS,xp:95, col:'#9fb0c8',
+  phantom: {spr:mk(PHANTOM), rows:PHANTOM, hp:90, spd:36*VS,xp:95, col:'#9fb0c8',
             phase:[0.9,0.30],maxOn:4,dth:'A PHANTOM RAN YOU DOWN'},
-  colossus:{spr:mk(COLOSSUS),rows:COLOSSUS,hp:24,spd:16*VS,xp:170,col:'#ff8a2b',
+  colossus:{spr:mk(COLOSSUS),rows:COLOSSUS,hp:240,spd:16*VS,xp:170,col:'#ff8a2b',
             maxOn:2,scale:2.5,dth:'A COLOSSUS RAN YOU DOWN'},
   /* every 10th wave: 8x a brute, but it crawls, so it is a siege not an ambush */
-  boss: {spr:mk(BOSS), rows:BOSS, hp:90,spd:7*VS,xp:500,col:'#ffd34d',boss:true,
+  boss: {spr:mk(BOSS), rows:BOSS, hp:900,spd:7*VS,xp:500,col:'#ffd34d',boss:true,
          nm:'WARDEN',dth:'THE WARDEN RAN YOU DOWN'}
 };
 /* Scouts and drones carry waves 1-10 alone. Every boss that falls adds one
@@ -720,19 +720,19 @@ function tierOf(wave){return Math.floor((wave-1)/10);}
    extra bodies go to the kinds that can actually fill a screen. */
 var INS_HP=1.030,        /* health multiplier, per wave past 100 */
     INS_GAP=0.9745,      /* spawn gap shrinks by this each wave */
-    INS_GAPMIN=0.085,    /* 11.8 arrivals a second at the floor */
+    INS_GAPMIN=0.012,    /* 83 arrivals a second at the floor */
     INS_CONC_EVERY=3,    /* one more alien allowed on screen every N waves */
     /* Density is arrivals x how long each alien lives, and at the speed cap
        they cross in under two seconds, so the screen tops out around 22
        whatever this says. 30 was never the binding limit; it is kept just
        above the reachable ceiling so it never becomes one. */
-    INS_CONC_MAX=28,
+    INS_CONC_MAX=56,
     /* Waves grow past the old 36 ceiling, but the extra slots can only go to
        the uncapped kinds. The heavies are limited to six on screen between
        them and to their own per-type ceilings, and they need vertical
        separation from each other, so handing growth to them would simply
        stall the spawner. The swarm is what fills a screen. */
-    INS_TOTAL_PER=1.7, INS_TOTAL_MAX=420,
+    INS_TOTAL_PER=1.7, INS_TOTAL_MAX=700,
     INS_SWARM=['scout','drone','mite','diver','knitter'],
     INS_SPD=1.0018, INS_SPD_MAX=3.9,
     INS_AFF_EVERY=14,    /* one more affix per alien every N waves */
@@ -791,6 +791,16 @@ function rosterWeights(wave){
     if(wave<r.from)continue;
     since=tierOf(wave)-tierOf(r.from);
     w=r.base*Math.max(TIER_FLOOR,Math.pow(TIER_DECAY,since));
+    /* Weighted by bodies, a brute counted the same as a scout while carrying
+       five and a half times its health - so by the mid teens brutes were 37%
+       of the wave by count and 65% of the work in it, and the wave stopped
+       being a mix and became a wall. Dividing by the square root of bulk
+       means a kind five times heavier arrives a bit over twice as rarely: it
+       still leads its decade, but its share of the WORK grows like the root
+       of its size rather than straight in line with it. Every tier gets this,
+       which is the point - the splitter and the colossus would each have
+       walked into the same wall on arrival. */
+    w/=Math.sqrt((TYPES[r.k]?TYPES[r.k].hp:DMG*2)/(TYPES.scout.hp));
     /* A newcomer eases in over its own decade rather than arriving at full
        strength: the wave after a boss used to leap straight to nine brutes. */
     if(since===0&&r.from>1){
@@ -907,10 +917,10 @@ function rotFrames(src,n){
    small rock is a real commitment and the big ones simply cannot be cleared.
    Breaking them is what offensive upgrades eventually buy you. */
 var ROCKS=[
-  {r:4, spd:134*VS,spin:2.0,weight:3.0,hp:5,   xp:15,blast:1.9},
-  {r:6, spd:110*VS,spin:1.6,weight:3.0,hp:9,   xp:25,blast:3},
-  {r:9, spd:86*VS, spin:1.2,weight:2.2,hp:15,  xp:40,blast:5},
-  {r:13,spd:62*VS, spin:0.8,weight:1.3,hp:25,  xp:60,blast:7.5}
+  {r:4, spd:134*VS,spin:2.0,weight:3.0,hp:50, xp:15,blast:19},
+  {r:6, spd:110*VS,spin:1.6,weight:3.0,hp:90, xp:25,blast:30},
+  {r:9, spd:86*VS, spin:1.2,weight:2.2,hp:150,xp:40,blast:50},
+  {r:13,spd:62*VS, spin:0.8,weight:1.3,hp:250,xp:60,blast:75}
 ];
 var ROT=10;
 /* Meteors are out of the game for now. The subsystem below is left intact
@@ -932,20 +942,24 @@ var ROCK_TOTAL=0;
 for(var rw=0;rw<ROCKS.length;rw++)ROCK_TOTAL+=ROCKS[rw].weight;
 
 /* ================= player / weapon ================= */
-/* One shot is one point of damage, so an alien's health IS its shot count at
-   the start of a run - which is what makes the numbers below readable.
-   Two different scales hang off this, and they are not the same number:
-   HEALTH-like values (alien hp, absorb pools, rock hp, debris damage) were
-   divided by 8, because damage per second went from 10x8=80 to 1x10=10 and
-   time-to-kill had to stay where it was. DAMAGE-like values (a carapace's
-   flat reduction, the floor below) were divided by 10, because they are
-   measured against a single shot. Mixing those two up is what would quietly
-   break the carapace. */
-var DMG=1,FIRE_RATE=10,BULLET_SPD=Math.round(270*VS);
-/* The least a shot can ever do: a tenth of one. This used to be the literal
-   1, which was a tenth of a shot back when DMG was 10 - at DMG 1 that same
-   literal equals a WHOLE shot, so flat reduction and the ARMOURED affix would
-   have been floored into doing nothing at all. */
+/* A shot does 10, and every health value below is ten times its shot count -
+   so a 110 brute is eleven shots, same as it was when health WAS the shot
+   count. Starting a run on 1 damage made the numbers legible but it also made
+   every damage number on screen read "1", and reaching 100,000 from 10 is a
+   better arc than reaching it from 1.
+   Nothing about the balance moved in that change: health went up by exactly
+   the ten that damage did, so the shot counts and the time to kill are
+   identical either way.
+   Two scales hang off this and they are NOT the same number. HEALTH-like
+   values (alien hp, absorb pools, rock hp, debris damage) are in health.
+   DAMAGE-like values (a carapace's flat reduction, the floor below) are
+   measured against a single shot and scale with DMG. Mixing them up quietly
+   breaks the carapace. */
+var DMG=10,FIRE_RATE=10,BULLET_SPD=Math.round(270*VS);
+/* The least a shot can ever do: a tenth of one. Derived from DMG rather than
+   written as a literal, because as a literal it was a tenth of a shot at
+   DMG 10 and a WHOLE shot at DMG 1 - which floored flat reduction and the
+   ARMOURED affix into doing nothing at all. */
 var DMG_MIN=DMG*0.1;
 /* Three hearts is the whole hull, start and ceiling both. A boss can mend you
    back to three but never past it, so the hull is a thing you protect rather
@@ -1006,7 +1020,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.30';
+var VERSION='V2.33';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1019,10 +1033,19 @@ var MAXWAVE=100;
    rose with the roster tier. So from wave 20 to 100 the only thing escalating
    was WHAT arrived, not how much, and a good build outran that by wave 50.
    Volume now keeps climbing the whole way and the gap only ever tightens.
-   Waves 1-20 are left where they were - that part was never the problem. */
-function baseTotal(w){return Math.min(110,Math.round(5+(w-1)*1.45));}
-function baseConc(w){return Math.min(20,2+Math.floor((w-1)/3));}
-function baseGap(w){return Math.max(0.17,1.60*Math.pow(0.955,w-1));}
+   Waves 1-20 are left where they were - that part was never the problem.
+   The caps used to bite long before the gate: volume stopped at wave 73, the
+   gap at 50, concurrency at 55. So waves 55-100 escalated only in health and
+   speed, and by 100 a built ship one-taps most of what arrives - measured at
+   5.7x more damage than the wave asks for. The formulas themselves kept
+   climbing the whole way; it was only the caps clipping them. Relaxed, they
+   give wave 100 about 33 arrivals a second against 5.9, which is roughly the
+   5.7x that was going spare.
+   Every cap still binds at wave 50 or later, so nothing at or below that
+   moves - the early game is a separate problem and is not touched here. */
+function baseTotal(w){return Math.min(260,Math.round(5+(w-1)*1.45));}
+function baseConc(w){return Math.min(40,2+Math.floor((w-1)/3));}
+function baseGap(w){return Math.max(0.030,1.60*Math.pow(0.955,w-1));}
 function baseHp(w){return 1+(w-1)*0.07;}
 function baseSpd(w){return Math.min(2.6,1+(w-1)*0.030);}
 function waveDef(w){
@@ -1483,8 +1506,18 @@ var fireT,banner,bannerT,shake,invT,lvlInvT,respawnT,best=0,setPage=0;
 var keys={},ptr={active:false,x:W/2};
 var dragBoard=false,dragY=0,dragFrom=0;
 
-var LANES=5;
-function laneX(i){return Math.round((i+0.5)*(W/LANES));}
+/* The spawner only ever had five columns across a 256 wide screen, 51px
+   apart for an 11px scout, and THAT was what capped the screen at about
+   twenty - not the gap and not concurrency, which is why tightening those
+   alone changed nothing and left 168 refused spawns in a wave-100 run.
+   More columns open up from wave 50, where the other dials cap out, so the
+   early game keeps the five it always had. */
+var LANES_MAX=14;
+function laneCount(w){return Math.min(LANES_MAX,5+Math.max(0,Math.floor((w-50)/8)));}
+function laneX(i,n){return Math.round((i+0.5)*(W/(n||laneCount(wi+1))));}
+/* Never wider than the gap between two columns, or adjacent ones would refuse
+   each other and the extra columns would buy nothing. */
+function clashX(w){return Math.min(46,Math.floor(W/laneCount(w))-3);}
 
 /* An alien is worth a flat amount. SCORE banks the raw figure so runs stay
    comparable, while XP is what the multiplier acts on. */
@@ -1927,23 +1960,24 @@ function spawnAlien(force){
      so there is nothing to see and nothing to shoot until it emerges. */
   var afx=rollAffixes(t),spd=t.spd*curw.spd*afx.swift,sy0=HUD_H-t.h;
   if(spacedKind(t)&&insDepth(wi+1)===0)sy0=bruteSpawnY(t,sy0);
-  var order=[];for(i=0;i<LANES;i++)order.push(i);
+  var LN=laneCount(wi+1),CX=clashX(wi+1);
+  var order=[];for(i=0;i<LN;i++)order.push(i);
   for(i=order.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tm=order[i];order[i]=order[j];order[j]=tm;}
   var lane=-1;
   for(i=0;i<order.length;i++){
     /* the only test left: do not draw this one on top of something already
        coming out of the bar */
-    var lx=laneX(order[i]),clash=false;
+    var lx=laneX(order[i],LN),clash=false;
     for(var a=0;a<aliens.length;a++)
-      if(aliens[a].y<CLASH_Y&&Math.abs(aliens[a].x-lx)<CLASH_X){clash=true;break;}
+      if(aliens[a].y<CLASH_Y&&Math.abs(aliens[a].x-lx)<CX){clash=true;break;}
     if(!clash){lane=order[i];break;}
   }
   /* every lane is occupied right at the top: wait a beat rather than stack */
   if(lane<0){
     if(!force)return false;
     var far=-1;
-    for(i=0;i<LANES;i++){
-      var lx2=laneX(i),mind=1e9;
+    for(i=0;i<LN;i++){
+      var lx2=laneX(i,LN),mind=1e9;
       for(var a2=0;a2<aliens.length;a2++)mind=Math.min(mind,Math.abs(aliens[a2].x-lx2));
       /* weight in distance from the ship too, so a forced spawn never lands
          on top of where the player is standing */
@@ -1952,7 +1986,7 @@ function spawnAlien(force){
     }
   }
   queue.splice(qi,1);
-  var x=laneX(lane)+Math.round((Math.random()*2-1)*5),half=t.w/2;
+  var x=laneX(lane,LN)+Math.round((Math.random()*2-1)*5),half=t.w/2;
   x=Math.max(half+2,Math.min(W-half-2,x));
   var hp=t.hp*curw.hp,sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
   aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
@@ -2031,7 +2065,7 @@ function upColour(id){
 function upPop(u,r){
   if(!u)return;
   var label=(u.kind==='once')?u.name:(u.name+' +'+u.vals[r]+'%');
-  ups.push({s:label,col:upColour(u.id),life:UP_LIFE,max:UP_LIFE});
+  ups.push({s:label,col:upColour(u.id),r:r,life:UP_LIFE,max:UP_LIFE});
   if(ups.length>10)ups.shift();     /* a long ladder would run off the top */
 }
 /* How much room a label would have at this spot: the distance to the nearest
@@ -2073,10 +2107,10 @@ function applyHit(a,dv){
 function addDmgNum(cx,cy,v,crit,halfW){
   if(!dmgNumbers)return;
   if(dnums.length>44)dnums.shift();
-  /* A decimal below 10, whole above it: at DMG 1 a rounded number would read
-     "1" on every hit for the whole early game, crits included. */
-  var val=Math.max(DMG_MIN,v);
-  var label=(val<10?val.toFixed(1):String(Math.round(val)))+(crit?'!':'');
+  /* Whole numbers. The decimal was only ever there because at DMG 1 a rounded
+     number read "1" on every hit; at DMG 10 there is nothing to show. */
+  var val=Math.max(DMG_MIN,Math.round(v));
+  var label=String(val)+(crit?'!':'');
   var half=txtW(label)/2;
   var off=(halfW||0)+5+half;
   /* Walk outwards on both sides, and if the row is packed, step above it.
@@ -2128,14 +2162,41 @@ function drawDmgNums(){
   }
   ctx.globalAlpha=1;
 }
+/* A halo in the rarity's own colour, breathing rather than static so it reads
+   as a glow. Two rings: a solid one against the glyphs and a fainter one
+   outside it. The ring positions are walked rather than filling the square,
+   so it costs 12 extra draws per line instead of 24. */
+var HALO_TOP=3;                  /* how many of the stack get the glow */
+function txtHalo(s,x,y,col,glow,t){
+  var a0=ctx.globalAlpha,pulse=0.72+0.28*Math.sin(t*4.2),i;
+  /* Eight positions tight against the glyphs, then four cardinals one step
+     further out for the bloom. Twelve draws - a full 5x5 ring would be
+     twenty-four, and with ten of these stacked that doubling is the
+     difference between cheap and not on a phone. */
+  var NEAR=[[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]],
+      FAR=[[0,-2],[0,2],[-2,0],[2,0]];
+  ctx.globalAlpha=a0*0.55*pulse;
+  for(i=0;i<NEAR.length;i++)txt(s,x+NEAR[i][0],y+NEAR[i][1],glow);
+  ctx.globalAlpha=a0*0.22*pulse;
+  for(i=0;i<FAR.length;i++)txt(s,x+FAR[i][0],y+FAR[i][1],glow);
+  ctx.globalAlpha=a0;
+  txt(s,x,y,col);
+}
 /* Newest at the bottom, older ones pushed up the stack. */
 function drawUpPops(){
   for(var i=0;i<ups.length;i++){
     /* above the ship, not below it, and held off the right edge */
-    var u=ups[ups.length-1-i],y=SHIP_Y-16-i*9;
+    var u=ups[ups.length-1-i],y=SHIP_Y-16-i*9,x=W-10-txtW(u.s);
     if(y<40)break;
     ctx.globalAlpha=Math.max(0,Math.min(1,u.life/0.45));
-    txt(u.s,W-10-txtW(u.s),y,u.col);
+    /* Only the newest few are haloed. Each halo is twelve extra text draws,
+       and a level ladder can put ten of these up in the same frame - which
+       measured at 1556 glyph draws against the 30 this screen otherwise
+       needs. The glow is there to announce what was just taken; the ones
+       further up the stack are already history and are fading out. */
+    if(i<HALO_TOP&&u.r!==undefined&&RARITY[u.r])
+      txtHalo(u.s,x,y,u.col,RARITY[u.r].col,gameT+i*0.7);
+    else txt(u.s,x,y,u.col);
   }
   ctx.globalAlpha=1;
 }
@@ -2147,7 +2208,7 @@ function drawUpPops(){
    ticks, and it does not set off other rocks or touch the player. */
 function rockBlast(rk){
   var reach=rk.r+TYPES.scout.w;
-  var dv=(rk.blast||2.5)*upDmg;
+  var dv=(rk.blast||25)*upDmg;
   shocks.push({x:rk.x,y:rk.y,r0:rk.r,max:reach,life:0.30,dur:0.30});
   sfx.blast(rk.r);
   shake=Math.max(shake,rk.r>=9?3:2);
@@ -3028,7 +3089,7 @@ function cardRect(i){
 /* one line per card saying exactly what the pick does */
 function cardDetail(c){
   var u=c.u,v=u.vals?u.vals[c.r]:0;
-  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  SHOTS/SEC';
+  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  BPS';
   if(u.id==='dmg') return upDmg.toFixed(2)+'x \u2192 '+(upDmg+v/100).toFixed(2)+'x  DAMAGE';
   if(u.id==='luck')return upLuck+'% \u2192 '+(upLuck+v)+'%  LUCK';
   if(u.id==='crit')return upCrit+'% \u2192 '+(upCrit+v)+'%  CRIT';
@@ -3810,16 +3871,30 @@ function hpBarCol(f){
 }
 var HEART_FROM=[11,8,5,3,0];      /* leftmost column still filled, by segment */
 var HEART_FULL='#ff4d6d',HEART_EMPTY='#4a1020';
+/* Drawn at HEART_K with a nearest-neighbour step rather than a scaled rect,
+   so every source pixel lands on whole pixels and the edges stay crisp at a
+   fractional scale. */
+var HEART_K=1.5;
+var HEART_W=Math.round(HEART[0].length*HEART_K),
+    HEART_HT=Math.round(HEART.length*HEART_K);
 function drawHeartSeg(x,y,seg){
   seg=seg<0?0:(seg>SEG?SEG:seg);
-  var from=HEART_FROM[seg],r,c;
-  for(r=0;r<HEART.length;r++)for(c=0;c<HEART[r].length;c++){
-    if(HEART[r].charAt(c)!=='#')continue;
-    ctx.fillStyle=(c>=from)?HEART_FULL:HEART_EMPTY;
-    ctx.fillRect(x+c,y+r,1,1);
+  var from=HEART_FROM[seg],r,c,px,py,pw,ph;
+  for(r=0;r<HEART.length;r++){
+    py=Math.round(r*HEART_K);ph=Math.round((r+1)*HEART_K)-py;
+    for(c=0;c<HEART[r].length;c++){
+      if(HEART[r].charAt(c)!=='#')continue;
+      px=Math.round(c*HEART_K);pw=Math.round((c+1)*HEART_K)-px;
+      ctx.fillStyle=(c>=from)?HEART_FULL:HEART_EMPTY;
+      ctx.fillRect(x+px,y+py,pw,ph);
+    }
   }
 }
 
+/* The row has always ended at x 223, just clear of the gear. Kept as the right
+   EDGE and the left x derived, so widening the heart cannot push it under the
+   gear the way a hardcoded left x would. */
+var HEART_RIGHT=223, HEART_X=HEART_RIGHT-HEART_W;
 var GEAR={x:234,y:0,w:22,h:17};
 function drawGear(col,atx,aty){
   var cx=(atx===undefined?GEAR.x+11:atx),cy=(aty===undefined?GEAR.y+8:aty);
@@ -3885,19 +3960,17 @@ function drawHud(){
      numbers were small. Score anchors left, the hearts and gear anchor right,
      and the wave sits against the hearts with whatever is between. */
   txt('SCORE '+String(score).padStart(6,'0'),2,4,'#9fd8ff');
-  var heartsX=212-(Math.max(1,hearts())-1)*12;
-  /* No denominator: there is no last wave to count towards. Past the gate it
-     carries INS and goes purple to say which side of 100 you are on. */
-  /* The wave number sits dead centre and stays there: the same column before
-     and after the gate, so it does not jump sideways the moment INS appears.
-     INS hangs off its right rather than being part of the centred string. */
-  var ins=(wi+1>MAXWAVE),wTxt='W'+(wi+1),insW=ins?5+txtW('INS'):0;
+  var heartsX=HEART_X-(Math.max(1,hearts())-1)*(HEART_W+2);
+  /* No denominator: there is no last wave to count towards. Past the gate the
+     number simply goes purple - the colour says which side of 100 you are on
+     without a label beside it taking up the room. The number sits dead centre
+     and stays there, the same column either side of the gate. */
+  var ins=(wi+1>MAXWAVE),wTxt='W'+(wi+1);
   var wX=Math.round((W-txtW(wTxt))/2);
   /* never let it ride over the score on the left or the hearts on the right */
   var scoreEnd=2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
-  wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-insW-txtW(wTxt)));
+  wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-txtW(wTxt)));
   txt(wTxt,wX,4,ins?C_INS:'#ffe066');
-  if(ins)txt('INS',wX+txtW(wTxt)+5,4,C_INS);
   /* second row: level, then the XP bar numbers, then the multiplier */
   var lvTxt='LV'+level;
   txt(lvTxt,2,17,'#8fe9ff');
@@ -3917,9 +3990,12 @@ function drawHud(){
     ctx.fillStyle=C_XP;ctx.fillRect(0,27,Math.round(W*Math.max(0,Math.min(1,xp/xpNeed))),2);
   }
   /* Right-anchored and shrinking leftward, the way the row always worked, so
-     the leftmost heart is the one currently being chipped. */
+     the leftmost heart is the one currently being chipped. Sat on the bar's
+     own midline rather than near its top, and the step between them is the
+     heart's real width so the spacing follows the scale. */
   for(var i=0;i<hearts();i++)
-    drawHeartSeg(212-i*12,4,Math.min(SEG,hp-i*SEG));
+    drawHeartSeg(HEART_X-i*(HEART_W+2),Math.round((HUD_H-HEART_HT)/2),
+                 Math.min(SEG,hp-i*SEG));
   drawGear(state===SETTINGS?'#ffe066':(state===LEVELUP?'#2e3f58':'#6f8bb0'));
 
 }
@@ -3935,7 +4011,21 @@ function drawHud(){
    any rarity colour is 42 (CIE76 in Lab), against 0 before.
    The pairing is deliberate: DMG and CRIT DMG are both red because they both
    scale the same thing, which is why they are allowed to sit close. */
-var C_FIRE='#eeeea0',C_DMG='#ff5555',C_LUCK='#4fc01f',C_CRIT='#f5f53d',C_CRITD='#e87d7d',C_XP='#19d0c8';
+var C_FIRE='#ffffff',C_DMG='#ff5555',C_LUCK='#4fc01f',C_CRIT='#f5f53d',C_CRITD='#8a5fc0',C_XP='#19d0c8';
+/* CRIT DMG is the one deliberate near-neighbour. Dark purple sits 31 from the
+   ULTRA lavender rather than the 35 the rest clear, and that was a judgement
+   call rather than an oversight: a purple dark enough to clear 35 falls to
+   1.9:1 contrast on the panel and stops being readable at all. At 4.1:1 this
+   one reads, though it is dimmer than the rest of the palette, which run
+   6:1 to 10:1. */
+/* Two colours are deliberate near-neighbours rather than oversights, and both
+   are recorded in polishtest with the distance they were signed off at, so the
+   guard still catches the next accidental one.
+   CRIT DMG is dark purple, 31 from the ULTRA lavender: a purple dark enough to
+   clear 35 falls to 1.9:1 contrast on the panel and stops being readable.
+   FIRE RATE is white, 33 from the COMMON grey. Lab understates that pair -
+   both are low-chroma, and the 32 points of lightness between them read far
+   more clearly on black than the number suggests. */
 /* each stat gets its own column: dim caption, bright value underneath */
 function statCell(label,val,col,cx,y){
   ctx.globalAlpha=0.6;txt(label,cx,y,col,true);ctx.globalAlpha=1;
@@ -3945,7 +4035,7 @@ function statCell(label,val,col,cx,y){
    both call this, so the format, colours and spacing are identical by
    construction rather than by two lists that have to be kept in step. */
 function drawStatGrid(y){
-  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1),C_FIRE,  49,y);
+  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' BPS',C_FIRE,49,y);
   statCell('DMG',      upDmg.toFixed(2)+'x',         C_DMG,  128,y);
   statCell('LUCK',     upLuck+'%',                   C_LUCK, 207,y);
   statCell('CRIT',     upCrit+'%',                   C_CRIT,  49,y+24);
@@ -4063,7 +4153,10 @@ function drawLevelUp(){
        on both axes - enough to catch the eye without being legible as motion.
        Only the drawing moves; cardRect, which the tap test uses, does not. */
     if(c.r===3){
-      var jp=Math.floor(luT*30);
+      /* Slow enough to read through. At 30 steps a second this was a buzz and
+         the card could not be read at all; at 7 it holds each position long
+         enough for the eye to settle while still never being still. */
+      var jp=Math.floor(luT*7);
       rc.x+=(jagLit(i*131+1,jp)?1:0)-(jagLit(i*131+2,jp)?1:0);
       rc.y+=(jagLit(i*131+3,jp)?1:0)-(jagLit(i*131+4,jp)?1:0);
     }
@@ -4331,7 +4424,7 @@ function render(){
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
-    var build=(FIRE_RATE*upFire).toFixed(1)+'/SEC  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
+    var build=(FIRE_RATE*upFire).toFixed(1)+' BPS  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
               '   CRIT '+upCrit+'% x'+upCritD.toFixed(2);
     if(state===OVER)overlay(overReason||'RUN OVER',[
       'SCORE '+score+'   BEST '+best,
