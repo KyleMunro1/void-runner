@@ -1006,7 +1006,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.27';
+var VERSION='V2.30';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1111,8 +1111,9 @@ var UPGRADES=[
      worth more, so the card's own value and where a run ends up are not the
      same size of change. At [3,6,10,16] a wave-100 run sat around 160% luck,
      only just into the band where rares lead, which left most of the curve
-     unseen. These land it near 240%. */
-  {id:'luck',  name:'LUCK',      kind:'add', vals:[4,7,12,19], w:8},
+     unseen. [4,7,12,19] put it near 240%; these land it near 420%, measured
+     with the rare head start in place. Even steps of 5 on purpose. */
+  {id:'luck',  name:'LUCK',      kind:'add', vals:[5,10,15,25], w:8},
   {id:'crit',  name:'CRIT CHANCE',kind:'add',vals:[3,5,9,15],  w:8},
   {id:'critd', name:'CRIT DAMAGE',kind:'mult',vals:[10,18,28,45],w:8},
   {id:'xp',    name:'XP GAIN',    kind:'mult',vals:[10,20,32,50],w:9},
@@ -3923,7 +3924,18 @@ function drawHud(){
 
 }
 /* each stat keeps its own colour so the build reads at a glance */
-var C_FIRE='#c86bff',C_DMG='#ff5555',C_LUCK='#4fc01f',C_CRIT='#ffd34d',C_CRITD='#ff8a2b',C_XP='#19d0c8';
+/* Stat colours, and the rule they have to obey: none of them may be mistaken
+   for a rarity. The upgrade popup bottom right is painted in the stat's own
+   colour, and C_FIRE used to be '#c86bff' - byte for byte the ULTRA RARE
+   purple - so taking a fire rate card looked like having pulled an ultra.
+   CRIT and CRIT DMG were gold and orange, 19 and 21 from the INSANITY amber,
+   close enough to read as the same family at a glance.
+   Pink and purple are now kept out of this palette entirely, since that is
+   the confusion that was actually reported. The nearest any of these sits to
+   any rarity colour is 42 (CIE76 in Lab), against 0 before.
+   The pairing is deliberate: DMG and CRIT DMG are both red because they both
+   scale the same thing, which is why they are allowed to sit close. */
+var C_FIRE='#eeeea0',C_DMG='#ff5555',C_LUCK='#4fc01f',C_CRIT='#f5f53d',C_CRITD='#e87d7d',C_XP='#19d0c8';
 /* each stat gets its own column: dim caption, bright value underneath */
 function statCell(label,val,col,cx,y){
   ctx.globalAlpha=0.6;txt(label,cx,y,col,true);ctx.globalAlpha=1;
