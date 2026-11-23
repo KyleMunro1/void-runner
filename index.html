@@ -987,7 +987,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.22';
+var VERSION='V2.23';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -2237,14 +2237,21 @@ function lbRecover(code){
 /* The board's era, deliberately NOT the version string. Cosmetic releases
    and bug fixes keep their scores; a release that changes what the game asks
    of a player starts a fresh table, and the old one stays readable beside it.
-   Era 3 begins at V2.19 - ALPHA. The fairness guard is gone, the XP curve and
-   the card odds are rebuilt and heavies no longer keep their distance, so a
-   wave reached under era 2 is not the same achievement as that wave now.
+   Era 4 is ALPHA. The fairness guard is gone, the XP curve and the card odds
+   are rebuilt and heavies no longer keep their distance, so a wave reached
+   under era 2 is not the same achievement as that wave now.
    Era 2, V1.74 to V2.18, is kept beside it as PREALPHA, read only.
-   Era 1, everything up to V1.73, is no longer shown. Nothing was deleted to
-   do that: the server keys scores under v<era>/, so dropping a tab only stops
-   reading that prefix and every row is still sitting in the store. */
-var BOARD_ERA='3', PREV_ERA='2';
+   Era 3 is skipped. It was the alpha board for the few minutes before V2.22,
+   and in that window the era-blind lbBest let one player's prealpha run get
+   re-sent onto it - a wave-111 row on a board nobody could honestly hold one
+   on yet. There is no way to delete a row through the API (a POST is only
+   accepted if it beats the stored one), so the board moves on instead. That
+   also immunises it against anyone still playing a pre-V2.22 tab: their
+   stale run lands on v3, which nothing reads.
+   Era 1, everything up to V1.73, is no longer shown either. Nothing was ever
+   deleted to drop an era: the server keys scores under v<era>/, so dropping a
+   tab only stops reading that prefix and every row is still in the store. */
+var BOARD_ERA='4', PREV_ERA='2';
 function majorVer(){return LB.era||BOARD_ERA;}
 /* Your own run belongs to the current era, so it is only ever merged into
    that board - never onto the prealpha one, which is now frozen history. */
@@ -2767,7 +2774,7 @@ function closeNamePrompt(save){
 /* ================= full leaderboard ================= */
 /* Two tabs across the top of the full board: the live table, and the frozen
    one from before the roster patch. */
-var BOARD_TABS=[['ALPHA','3'],['PREALPHA','2']];
+var BOARD_TABS=[['ALPHA','4'],['PREALPHA','2']];
 function boardTabRect(i){
   var gap=8,w=Math.round((W-32-gap)/2);
   return {x:16+i*(w+gap),y:40,w:w,h:18};
