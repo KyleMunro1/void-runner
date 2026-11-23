@@ -987,7 +987,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.21';
+var VERSION='V2.22';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -2257,8 +2257,20 @@ function viewingCurrent(){return (LB.era||BOARD_ERA)===BOARD_ERA;}
    the eras rotated and the board quietly kept loading the old one. */
 var LB={rows:[],mode:'local',busy:false,err:'',scroll:0,era:BOARD_ERA};
 
+/* The device's best run IN THIS ERA, and the era test is the point of it.
+   This used to hand back whatever was in vr_best regardless, which is how a
+   prealpha run climbed onto the alpha board: lbSubmit builds the optimistic
+   row from here, so finishing a modest alpha run looked up a wave-111
+   prealpha record and showed that instead - briefly correct, then overwritten
+   by the merge. A record written before the era field existed predates era 3
+   by definition, so a missing era counts as another era's too.
+   The record it hides is not lost: it is on that era's board on the server,
+   and that board is read only, so nothing here needs it any more. */
 function lbBest(){
-  try{return JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){return null;}
+  try{
+    var b=JSON.parse(localStorage.getItem('vr_best')||'null');
+    return (b&&b.era===BOARD_ERA)?b:null;
+  }catch(e){return null;}
 }
 /* The hull is stored WITH the run that earned it. Reading the current colour
    instead meant repainting your ship silently recoloured a record set in a
