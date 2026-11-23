@@ -49,10 +49,19 @@ var W=256;
    screen instead of sitting in a letterboxed block. Clamped to the band the
    layout is designed for: 1.50x width (tablets, desktop windows) through
    2.20x (tall 20:9 phones). */
-function pickH(){
+/* The canvas is shaped to the space it will actually be shown in, not to the
+   raw viewport. Shaping it to the viewport and then fitting it into a smaller
+   box left slack on one axis, which is where the black bars down the sides
+   came from: the badge strip ate the height, so the scale dropped, and the
+   width no longer reached the edges. Taking the strip off BEFORE choosing the
+   shape means the fit is tight on both axes. */
+function freeBox(){
   var vw=(window.visualViewport&&window.visualViewport.width)||window.innerWidth||360;
   var vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight||680;
-  var a=vh/vw;
+  return {w:Math.max(80,vw),h:Math.max(80,vh-badgeInset())};
+}
+function pickH(){
+  var b=freeBox(),a=b.h/b.w;
   if(!(a>0.2&&a<8))a=1.90;
   return Math.round(W*Math.max(1.50,Math.min(2.20,a))/2)*2;
 }
@@ -93,7 +102,9 @@ function fit(){
   if(typing){ if(lastFreeH)vh=Math.max(vh,lastFreeH); }
   else lastFreeH=vh;
   var inset=badgeInset();
-  var avW=Math.max(80,vw-8),avH=Math.max(80,vh-inset-8);
+  /* no slack margin: the shape already matches this box, so any margin here
+     is a black bar the player can see */
+  var avW=Math.max(80,vw),avH=Math.max(80,vh-inset);
   var s=Math.min(avW/W,avH/H);
   var si=Math.floor(s);
   if(si>=1&&si/s>=0.97)s=si;                 /* crisp only when it is nearly free */
@@ -534,11 +545,13 @@ var BOSS_FINAL=[
 '......k..kKKKKKKKKKKKKKk..k......',
 '.........k.kkkkkkkkkkk.k.........',
 '............kkkkkkkkk............'];
-function scale2(src){
-  var c=document.createElement('canvas');c.width=src.width*2;c.height=src.height*2;
+function scaleK(src,k){
+  var c=document.createElement('canvas');
+  c.width=Math.round(src.width*k);c.height=Math.round(src.height*k);
   var x=c.getContext('2d');x.imageSmoothingEnabled=false;
   x.drawImage(src,0,0,c.width,c.height);return c;
 }
+function scale2(src){return scaleK(src,2);}
 /* The hull letters A/B/C get repainted per theme; the canopy and engine stay. */
 var SHIP_THEMES=[
   {k:'YELLOW',A:'#fff3a8',B:'#e8c021',C:'#5e4a0b'},
@@ -607,27 +620,43 @@ var HITW=Math.round(SHIP_W*0.34);
 
 /* ---- enemy stats: bullet does 10 dmg, gun fires 8/sec = 80 dps ---- */
 var TYPES={
-  scout:{spr:mk(SCOUT),rows:SCOUT,hp:20,spd:46*VS,xp:10,col:'#4fc01f',dth:'A SCOUT RAN YOU DOWN'},
+  /* Scouts and drones carry waves 1-10 on their own and they stay honest:
+     straight down, hittable, the thing you learn the game against. Giving the
+     scout a weave cost the bot half its accuracy and seven levels a run. */
+  scout:{spr:mk(SCOUT),rows:SCOUT,hp:20,spd:46*VS,xp:10,col:'#4fc01f',
+         dth:'A SCOUT RAN YOU DOWN'},
   drone:{spr:mk(DRONE),rows:DRONE,hp:40,spd:34*VS,xp:25,col:'#c86bff',dth:'A DRONE RAN YOU DOWN'},
   brute:{spr:mk(BRUTE),rows:BRUTE,hp:90,spd:24*VS,xp:60,col:'#ff5555',
          maxOn:6,dth:'A BRUTE RAN YOU DOWN'},
   /* --- unlocked one at a time, each after a boss falls --- */
   mite:    {spr:mk(MITE),    rows:MITE,    hp:15, spd:78*VS,xp:14, col:'#ffd34d',
             dth:'A MITE RAN YOU DOWN'},
+  /* the splitter already has a trick of its own, so it travels plainly */
   splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:55, spd:30*VS,xp:45, col:'#c8ff4d',
             splits:2,maxOn:4,dth:'A SPLITTER RAN YOU DOWN'},
+  /* stair: crosses the screen, drops a step at the wall, comes back. It
+     barely descends on its own, so it sits in your way rather than falling
+     past you - the shield makes that genuinely awkward. */
   bulwark: {spr:mk(BULWARK), rows:BULWARK, hp:45, spd:26*VS,xp:75, col:'#19d0c8',
-            shield:55,maxOn:4,dth:'A BULWARK RAN YOU DOWN'},
+            shield:55,maxOn:4,stair:96,step:44,dth:'A BULWARK RAN YOU DOWN'},
+  /* shove: it comes down hard enough to barge whatever is in the way out of
+     its path, which opens lanes you were not expecting */
   diver:   {spr:mk(DIVER),   rows:DIVER,   hp:45, spd:26*VS,xp:55, col:'#e8f2ff',
-            accel:3.0,dth:'A DIVER RAN YOU DOWN'},
+            accel:3.0,shove:170,dth:'A DIVER RAN YOU DOWN'},
+  /* drift: slides sideways while it descends, turning at the walls. The one
+     kind that weaves, for now - the others each have a trick already. */
   carapace:{spr:mk(CARAPACE),rows:CARAPACE,hp:85, spd:22*VS,xp:90, col:'#19d0c8',
-            dr:6,maxOn:4,dth:'A CARAPACE RAN YOU DOWN'},
+            dr:6,maxOn:4,drift:22,dth:'A CARAPACE RAN YOU DOWN'},
+  /* the knitter stitches its NEIGHBOURS back together, not just itself, so
+     leaving one alive quietly undoes the damage you are doing to everything
+     around it. Kill it first or kill nothing. */
   knitter: {spr:mk(KNITTER), rows:KNITTER, hp:80, spd:28*VS,xp:85, col:'#ff5fd2',
-            regen:0.045,dth:'A KNITTER RAN YOU DOWN'},
+            regen:0.020,heal:0.055,healR:64,dth:'A KNITTER RAN YOU DOWN'},
+  /* phasing is its whole character; it just spends less time untouchable */
   phantom: {spr:mk(PHANTOM), rows:PHANTOM, hp:70, spd:36*VS,xp:95, col:'#9fb0c8',
-            phase:[0.9,0.55],maxOn:4,dth:'A PHANTOM RAN YOU DOWN'},
+            phase:[0.9,0.30],maxOn:4,dth:'A PHANTOM RAN YOU DOWN'},
   colossus:{spr:mk(COLOSSUS),rows:COLOSSUS,hp:190,spd:16*VS,xp:170,col:'#ff8a2b',
-            maxOn:2,dth:'A COLOSSUS RAN YOU DOWN'},
+            maxOn:2,scale:2.5,dth:'A COLOSSUS RAN YOU DOWN'},
   /* every 10th wave: 8x a brute, but it crawls, so it is a siege not an ambush */
   boss: {spr:mk(BOSS), rows:BOSS, hp:720,spd:7*VS,xp:500,col:'#ffd34d',boss:true,
          nm:'WARDEN',dth:'THE WARDEN RAN YOU DOWN'}
@@ -686,15 +715,19 @@ function tierOf(wave){return Math.floor((wave-1)/10);}
    extra bodies go to the kinds that can actually fill a screen. */
 var INS_HP=1.030,        /* health multiplier, per wave past 100 */
     INS_GAP=0.9745,      /* spawn gap shrinks by this each wave */
-    INS_GAPMIN=0.12,     /* 8.3 arrivals a second: twice what a player can service */
-    INS_CONC_EVERY=4,    /* one more alien allowed on screen every N waves */
-    INS_CONC_MAX=30,
+    INS_GAPMIN=0.085,    /* 11.8 arrivals a second at the floor */
+    INS_CONC_EVERY=3,    /* one more alien allowed on screen every N waves */
+    /* Density is arrivals x how long each alien lives, and at the speed cap
+       they cross in under two seconds, so the screen tops out around 22
+       whatever this says. 30 was never the binding limit; it is kept just
+       above the reachable ceiling so it never becomes one. */
+    INS_CONC_MAX=28,
     /* Waves grow past the old 36 ceiling, but the extra slots can only go to
        the uncapped kinds. The heavies are limited to six on screen between
        them and to their own per-type ceilings, and they need vertical
        separation from each other, so handing growth to them would simply
        stall the spawner. The swarm is what fills a screen. */
-    INS_TOTAL_PER=0.9, INS_TOTAL_MAX=140,
+    INS_TOTAL_PER=1.7, INS_TOTAL_MAX=420,
     INS_SWARM=['scout','drone','mite','diver','knitter'],
     INS_SPD=1.0018, INS_SPD_MAX=3.9,
     INS_AFF_EVERY=14,    /* one more affix per alien every N waves */
@@ -787,7 +820,10 @@ for(var bi=1;bi<BOSSES.length;bi++){
   bv.dth='THE '+bv.nm.replace('THE ','')+' RAN YOU DOWN';
 }
 for(var k in TYPES){
-  var t=TYPES[k];t.key=k;t.fl=scale2(whiten(t.spr));t.spr=scale2(t.spr);
+  var t=TYPES[k];t.key=k;
+  /* everything is drawn at 2x; a type may ask for more */
+  var sk=t.scale||2;
+  t.fl=scaleK(whiten(t.spr),sk);t.spr=scaleK(t.spr,sk);
   t.w=t.spr.width;t.h=t.spr.height;
 }
 for(var bj=1;bj<BOSSES.length;bj++){
@@ -892,7 +928,10 @@ for(var rw=0;rw<ROCKS.length;rw++)ROCK_TOTAL+=ROCKS[rw].weight;
 
 /* ================= player / weapon ================= */
 var DMG=10,FIRE_RATE=8,BULLET_SPD=Math.round(270*VS);
-var SHIP_SPD=360,SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=5,INVULN=2.0;
+/* Three hearts is the whole hull, start and ceiling both. A boss can mend you
+   back to three but never past it, so the hull is a thing you protect rather
+   than a bar you grow. */
+var SHIP_SPD=360,SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=3,INVULN=2.0;
 /* ===== hull =====
    Hearts are four segments each, and the hull is counted in segments, so the
    roster's weight range finally shows up in what a touch costs you: a mite
@@ -929,9 +968,12 @@ var LVL_INVULN=0.5;
    three levels banked each re-touch took the next one. The cards were never
    read, let alone chosen. So a new card screen ignores input for a moment. */
 var LVL_LOCK=0.28,lvlLock=0;
+/* The cards used to appear fully formed in one frame. They now rise and
+   fade in over exactly the lock window, so the screen comes to rest at the
+   same moment it starts accepting taps. */
+var LU_ANIM=LVL_LOCK,luAnim=LU_ANIM,luT=0;
 /* The spawn fairness guard keeps the OLD 240 budget on purpose: the faster keys
    are a pure buff, not an excuse to spawn tighter patterns. */
-var GUARD_SPD=240;
 var LINE_Y=SHIP_Y+SHIP_H/2;   /* the line every meteor must cross */
 /* Run-scoped roguelite multipliers. SHIP_SPD above stays the BASE speed and is
    what the fairness guard reasons about, so move-speed upgrades buy real slack
@@ -945,17 +987,33 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V1.92';
+var VERSION='V2.19';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
+/* The 1-100 dials live here, in one place. The insanity formulas anchor on
+   their own wave-100 values, and those used to be written out again as
+   literals - so retuning the early curve silently moved the handover out of
+   step with it. Both read these now.
+   The shape changed: volume used to stop growing at wave 20 (36 enemies, 9 on
+   screen) and the gap actually LOOSENED from wave 35 on, because its floor
+   rose with the roster tier. So from wave 20 to 100 the only thing escalating
+   was WHAT arrived, not how much, and a good build outran that by wave 50.
+   Volume now keeps climbing the whole way and the gap only ever tightens.
+   Waves 1-20 are left where they were - that part was never the problem. */
+function baseTotal(w){return Math.min(110,Math.round(5+(w-1)*1.45));}
+function baseConc(w){return Math.min(20,2+Math.floor((w-1)/3));}
+function baseGap(w){return Math.max(0.17,1.60*Math.pow(0.955,w-1));}
+function baseHp(w){return 1+(w-1)*0.07;}
+function baseSpd(w){return Math.min(2.6,1+(w-1)*0.030);}
 function waveDef(w){
   var boss=(w+1)%10===0,wave=w+1;
   var ind=insDepth(wave);
-  var total=Math.min(36,Math.round(5+w*1.6));
+  var total=baseTotal(wave);
   /* Past the gate the wave keeps growing. The base 36 is dealt from the roster
      as always; everything above that is swarm, added after the deal. */
-  var swarm=(ind>0)?Math.min(INS_TOTAL_MAX,Math.round(36+ind*INS_TOTAL_PER))-total:0;
+  var swarm=(ind>0)?Math.max(0,Math.min(INS_TOTAL_MAX,
+      Math.round(baseTotal(MAXWAVE)+ind*INS_TOTAL_PER))-total):0;
   if(boss){total=Math.max(4,Math.round(total*0.45));  /* the boss is the wave */
            swarm=Math.round(swarm*0.45);}
   /* The mix is dealt from whatever the roster has unlocked by this wave,
@@ -990,10 +1048,8 @@ function waveDef(w){
      own wave-100 value computed from the formulas below, so retuning the
      1-100 curve carries straight through to the handover. */
   if(ind>0){
-    var hp100=1+(MAXWAVE-1)*0.07,
-        gap100=Math.max(0.26+0.020*tierOf(MAXWAVE),1.60*Math.pow(0.945,MAXWAVE-1)),
-        conc100=Math.min(9,2+Math.floor((MAXWAVE-1)/2.0)),
-        spd100=Math.min(2.6,1+(MAXWAVE-1)*0.030);
+    var hp100=baseHp(MAXWAVE),gap100=baseGap(MAXWAVE),
+        conc100=baseConc(MAXWAVE),spd100=baseSpd(MAXWAVE);
     return {mix:mix,boss:boss,total:total,ins:ind,
       aff:insAffixCount(wave),affp:insAffixPower(wave),
       conc:Math.min(INS_CONC_MAX,conc100+Math.floor(ind/INS_CONC_EVERY))+(boss?2:0),
@@ -1002,18 +1058,14 @@ function waveDef(w){
       spd:Math.min(INS_SPD_MAX,spd100*Math.pow(INS_SPD,ind))};
   }
   return {mix:mix,boss:boss,total:total,ins:0,aff:0,affp:1,
-    conc:Math.min(9,2+Math.floor(w/2.0))+(boss?2:0),
-    /* Late enemies are individually far tougher, so the same 0.26s burst
-       that worked against scouts buries you against a roster of heavies.
-       The floor eases out as the roster grows: the wave still holds just as
-       many, they simply do not all arrive at once. */
-    gap:Math.max(0.26+0.020*tierOf(w+1),1.60*Math.pow(0.945,w)),
+    conc:baseConc(wave)+(boss?2:0),
+    gap:baseGap(wave),
     /* The roster now carries the escalation - wave 60 is fought against
        things wave 10 never saw - so the blanket health multiplier no longer
        has to do that job on its own. At 0.12 the new heavies compounded with
        it and nothing past wave 25 was survivable. */
-    hp:1+w*0.07,
-    spd:Math.min(2.6,1+w*0.030)};
+    hp:baseHp(wave),
+    spd:baseSpd(wave)};
 }
 function meteorPlan(w){
   if(!METEORS_ON)return null;
@@ -1024,10 +1076,14 @@ function meteorPlan(w){
 }
 
 /* ================= levelling ================= */
-var RARITY=[{k:'COMMON',w:75,col:'#9aa7b5'},
-            {k:'RARE',w:20,col:'#4fa3ff'},
-            {k:'ULTRA RARE',w:4.5,col:'#c86bff'},
-            {k:'INSANITY',w:0.5,col:'#ffb03a'}];
+/* Luck alone decides the odds - see rarityWeights - so there are no weights
+   here to state. The tiers carry a name and a colour and nothing else; a w
+   field would sit here looking authoritative while doing nothing, which is
+   exactly what the old one did. */
+var RARITY=[{k:'COMMON',col:'#9aa7b5'},
+            {k:'RARE',col:'#4fa3ff'},
+            {k:'ULTRA RARE',col:'#c86bff'},
+            {k:'INSANITY',col:'#ffb03a'}];
 var CARDS=3;
 var UPGRADES=[
   {id:'fire',  name:'FIRE RATE', kind:'mult',vals:[5,9,15,25], w:10},
@@ -1036,18 +1092,18 @@ var UPGRADES=[
   {id:'crit',  name:'CRIT CHANCE',kind:'add',vals:[3,5,9,15],  w:8},
   {id:'critd', name:'CRIT DAMAGE',kind:'mult',vals:[10,18,28,45],w:8},
   {id:'xp',    name:'XP GAIN',    kind:'mult',vals:[10,20,32,50],w:9},
-  /* fixed-rarity by design: a shield is always rare, so it cannot be farmed
-     cheaply. Hearts are NOT on the table at all - a boss is the only way to
-     get one, which keeps repair somewhere the player earns it rather than
-     somewhere luck can hand it over. */
-  {id:'shield',name:'SHIELD',    kind:'once',fixed:1,w:6}
+  /* off:true is dealt to nobody. The shield MECHANIC is untouched - it still
+     absorbs a whole touch, still clears the room, grantUpgrade still knows how
+     to grant it - so putting the card back is a matter of dropping this flag.
+     Hearts are not on the table either; a boss is the only way to get one. */
+  {id:'shield',name:'SHIELD',    kind:'once',fixed:1,w:6,off:true}
 ];
 function upById(id){
   for(var i=0;i<UPGRADES.length;i++)if(UPGRADES[i].id===id)return UPGRADES[i];
   return null;
 }
-/* Dealing 3 cards from a 5-option pool meant a low weight gated almost
-   nothing, so the shield rolls its own odds for a slot. */
+/* Kept for when the shield card comes back; nothing reads it while the card
+   is flagged off. */
 var P_SHIELD=0.25;
 /* Luck drains weight out of COMMON and pushes it up the tiers. At 0% this is
    exactly 75/20/4.5/0.5.
@@ -1059,25 +1115,57 @@ var P_SHIELD=0.25;
    and a heavily invested run really does turn into a jackpot machine. The
    0-100% range is left almost exactly where it was, so nobody's current
    build changes under them. */
+/* The base weights sum to 100, so at zero luck the table reads straight off
+   as percentages. Luck bends them from there: commons collapse, and the top
+   two climb fastest, which is what makes a luck build feel like a different
+   game rather than a slightly better one. */
+/* The four tiers are a ladder, each a tenth as likely as the one above it,
+   and luck walks a single shape up that ladder rather than scaling any tier
+   on its own:
+     weight(tier) = 10 ^ (-|tier - centre| / spread)
+   The centre runs from COMMON to INSANITY as luck goes 0 to 1000%. The spread
+   is zero at both ends - no luck is every card common, full luck is every card
+   insanity - and fattens through the middle so no single tier runs away with
+   it.
+   What comes out is a wave travelling up the ladder, each tier leading for a
+   real stretch: commons to 170%, rare to 510%, ultra to 840%, insanity from
+   there to the cap. It is symmetric about halfway, so the odds at 900% are
+   those at 100% read backwards, and at 500% all four sit at 12/38/38/12.
+   Past the cap nothing moves and the LUCK card stops being dealt, so a maxed
+   build is never offered a card that does nothing. */
+var LUCK_FULL=1000,LUCK_SPREAD=2;
 function rarityWeights(){
-  var L=upLuck/100;
-  return [75 *Math.pow(0.30,L),
-          20 *(1+L*0.80),
-          4.5*(1+L*2.20+L*L*0.35),
-          0.5*(1+L*4.00+L*L*1.60)];
+  var n=RARITY.length,u=Math.max(0,Math.min(1,upLuck/LUCK_FULL)),w=[],i;
+  var sig=LUCK_SPREAD*Math.sqrt(Math.sin(Math.PI*u));
+  if(!(sig>0.004)){                     /* collapsed onto one end of the ladder */
+    for(i=0;i<n;i++)w.push(0);
+    w[u<0.5?0:n-1]=1;
+    return w;
+  }
+  var centre=(n-1)*u;
+  for(i=0;i<n;i++)w.push(Math.pow(10,-Math.abs(i-centre)/sig));
+  return w;
 }
 function rollRarity(){
   var w=rarityWeights(),tot=w[0]+w[1]+w[2]+w[3],r=Math.random()*tot,acc=0;
   for(var i=0;i<4;i++){acc+=w[i];if(r<acc)return i;}
   return 0;
 }
-/* Each level costs more than the last. At +50 the curve deliberately outpaces
-   what a wave pays out late on, which is what keeps the XP multiplier from
-   running away with the run. */
-/* +40 a level, not +50. At +50 the cost outran what a wave pays out: from
-   about wave 25 the waves stop growing but the level cost does not, so the
-   player steadily falls behind their own run. */
-function xpForLevel(L){return 60+(L-1)*40;}
+/* A level used to cost 60+40(L-1) - linear, forever. Your XP multiplier also
+   grows roughly linearly with how many levels you have had, so income over
+   cost was a CONSTANT: you kept levelling at the same rate however deep you
+   got, and deep in a run that rate is hundreds of levels a wave. Every one is
+   another card, and some of those cards are more XP. The curve never caught up
+   with the loop feeding it, which is how runs reached x550 XP and 7000% luck.
+   So it stays exactly linear for the first fifteen levels - the stretch a new
+   player spends the whole early game in, and which was never the problem - and
+   compounds past that. At level 20 it is 6% dearer than before, at 30 about
+   17%, and from there the gap widens enough to hold the loop in check. */
+var XP_KNEE=15,XP_RAMP=0.35;
+function xpForLevel(L){
+  var n=L-1;
+  return Math.round(60+40*n*Math.pow(Math.max(1,n/XP_KNEE),XP_RAMP));
+}
 
 /* ================= audio ================= */
 var AC=null;
@@ -1108,6 +1196,9 @@ function beep(f,dur,vol,type,slide,ch){
   g.gain.exponentialRampToValueAtTime(0.0001,a.currentTime+dur);
   o.connect(g);g.connect(a.destination);o.start();o.stop(a.currentTime+dur);
 }
+/* The card screen has no sound of its own. It had a sustained chord, which
+   went the way of the arpeggio before it: the game's own music keeps playing
+   through a level-up now, and that is all it needs. */
 /* white noise pushed through a sweeping filter - this is what gives the
    explosions body instead of the thin beeps they were before */
 function burstNoise(dur,vol,f0,f1,q,type){
@@ -1129,8 +1220,20 @@ function noise(dur,vol){
   var s=a.createBufferSource(),g=a.createGain();
   s.buffer=buf;g.gain.value=vol*vmul();s.connect(g);g.connect(a.destination);s.start();
 }
+/* Past about thirty shots a second the individual cracks stop resolving and
+   smear into a buzz - the envelopes overlap faster than they decay. So the
+   SOUND is capped there while the fire rate keeps climbing: it builds up to
+   thirty a second and then holds, which is as dense as it can read anyway. */
+/* 32 rather than 30: the gate is checked once a frame, so at 60fps a limit
+   of exactly 30 also clips a gun firing AT 30 a second. A hair above lets
+   thirty through cleanly and still holds the ceiling at thirty. */
+var SHOT_SND_MAX=32, shotSndT=-1;
 var sfx={
-  shoot:function(){beep(900,0.035,0.022,'square',620,onShot?sndShot:0);},
+  shoot:function(){
+    if(gameT-shotSndT<1/SHOT_SND_MAX)return;
+    shotSndT=gameT;
+    beep(900,0.035,0.022,'square',620,onShot?sndShot:0);
+  },
   hit:function(){beep(440,0.04,0.045,'square',320);},
   pop:function(){noise(0.16,0.10);beep(260,0.14,0.05,'triangle',90);},
   big:function(){noise(0.34,0.17);beep(150,0.3,0.07,'sawtooth',50);},
@@ -1152,10 +1255,22 @@ var sfx={
   killBrute:function(){burstNoise(0.46,0.28,900,70,0,'lowpass');
     beep(260,0.26,0.075,'sawtooth',45);
     setTimeout(function(){beep(130,0.34,0.060,'triangle',40);},60);},
+  /* The old sting fell 330-262-196-131, and a descending line reads as a
+     defeat however big the explosion in front of it is. It climbs now. */
   killBoss:function(){burstNoise(0.95,0.32,1600,60,0,'lowpass');
-    beep(392,0.50,0.070,'sawtooth',55);
-    [330,262,196,131].forEach(function(f,i){
-      setTimeout(function(){beep(f,0.30,0.065,'square',f*0.6);},150+i*130);});},
+    beep(392,0.28,0.070,'sawtooth',300);
+    [523,659,784,1046,1318].forEach(function(f,i){
+      setTimeout(function(){beep(f,0.24,0.070,'square');},140+i*115);});
+    setTimeout(function(){beep(1568,0.55,0.075,'triangle');
+                          beep(784,0.70,0.040,'sine');},140+5*115);},
+  /* ---- 2. a boss arriving: low rumble under a rising figure ---- */
+  bossIn:function(){
+    burstNoise(1.20,0.26,300,70,0,'lowpass');
+    beep(98,0.95,0.075,'sawtooth',72);
+    [131,156,196,233].forEach(function(f,i){
+      setTimeout(function(){beep(f,0.40,0.065,'square');},i*155);});
+    setTimeout(function(){burstNoise(0.55,0.22,1900,180,0,'lowpass');
+                          beep(262,0.60,0.070,'sawtooth',180);},640);},
   /* a hard crunch in the same family as a rock breaking - it should read as
      something of yours being destroyed, not as a reward */
   shieldBreak:function(){burstNoise(0.30,0.25,2400,200,0,'lowpass');
@@ -1166,7 +1281,6 @@ var sfx={
     beep(392,0.18,0.055,'triangle',330);
     setTimeout(function(){beep(294,0.22,0.050,'triangle',247);},110);
     setTimeout(function(){beep(196,0.50,0.055,'sine',147);},230);},
-  level:function(){[523,659,784,1046,1318].forEach(function(f,i){setTimeout(function(){beep(f,0.1,0.05,'square');},i*70);});},
   pick:function(){beep(880,0.07,0.05,'square');setTimeout(function(){beep(1320,0.1,0.05,'square');},70);},
   /* warm and round, so it reads as relief rather than the level-up arpeggio */
   lifeGain:function(){
@@ -1386,10 +1500,18 @@ function swatchRect(i){
    the menu dropped the player into a live run with an empty field, and the
    wave-clear check then fired instantly and skipped them to wave 2. */
 var setBack=PLAY;
-function openSettings(){setPage=0;setBack=PLAY;state=SETTINGS;MUS.stop();}
+function openSettings(){
+  /* Remember where we came from: the gear is reachable from the card screen
+     too, and closing must put the cards back rather than drop you into play
+     with an unspent level. */
+  setPage=0;setBack=(state===LEVELUP)?LEVELUP:PLAY;state=SETTINGS;MUS.stop();
+}
 function closeSettings(){
   state=setBack;
-  if(setBack===PLAY)MUS.start();
+  if(setBack===PLAY||setBack===LEVELUP)MUS.start();
+  /* Coming back to the cards, re-arm the tap lock: the touch that closed
+     settings must not fall through and choose an upgrade. */
+  if(setBack===LEVELUP)lvlLock=LVL_LOCK;
 }
 /* Opened from the menu there is no run to restart or resume, and MAIN MENU is
    where you already are, so those three collapse into one BACK. */
@@ -1400,7 +1522,9 @@ function fromMenu(){return setBack===MENU;}
 function pageRows(){
   if(fromMenu())
     return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
-  return [['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN',''],['RESUME','']];
+  /* RESUME first: it is what you want nine times out of ten when you opened
+     this mid-run, and it was sitting at the bottom under the two that end it. */
+  return [['RESUME',''],['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN','']];
 }
 /* setPage 3: the switches that change how the game itself plays */
 function gpRows(){
@@ -1463,39 +1587,54 @@ function shuffle(a){
   return a;
 }
 function openLevelUp(){
-  var list=[],i;
-  if(!shield&&Math.random()<P_SHIELD)list.push(upById('shield'));
-  var stats=[upById('fire'),upById('dmg'),upById('luck'),upById('crit'),upById('xp')];
-  if(upCrit>0)stats.push(upById('critd'));   /* useless until you can crit */
+  var list=[],i,u;
+  /* Built from the table rather than named one by one, so a card flagged off
+     really is unreachable and clearing the flag really does bring it back. */
+  var stats=[];
+  for(i=0;i<UPGRADES.length;i++){
+    u=UPGRADES[i];
+    if(u.off||u.kind==='once')continue;
+    if(u.id==='critd'&&upCrit<=0)continue;   /* useless until you can crit */
+    if(u.id==='luck'&&upLuck>=LUCK_FULL)continue;  /* maxed: would do nothing */
+    stats.push(u);
+  }
   list=list.concat(shuffle(stats)).slice(0,CARDS);
   shuffle(list);
   var picked=[];
   for(i=0;i<list.length;i++)
     picked.push({u:list[i],r:(list[i].kind==='once')?list[i].fixed:rollRarity()});
-  choices=picked;state=LEVELUP;sfx.level();lvlFlash=0.75;
+  choices=picked;state=LEVELUP;lvlFlash=0.75;
   /* Auto levelling reads the card for you and must not be held up by the lock,
      so it picks before the lock is armed. */
   if(autoLevel){applyChoice(autoPick(),true);return;}
-  lvlLock=LVL_LOCK;
+  lvlLock=LVL_LOCK;luAnim=0;luT=0;
 }
 function grantUpgrade(u,r){
+  upPop(u,r);                       /* say what was taken, bottom right */
   if(u.kind==='mult'){var v=u.vals[r]/100;
     if(u.id==='fire')upFire+=v;else if(u.id==='dmg')upDmg+=v;
     else if(u.id==='xp')upXp+=v;else upCritD+=v;}
-  else if(u.kind==='add'){if(u.id==='luck')upLuck+=u.vals[r];else upCrit+=u.vals[r];}
+  else if(u.kind==='add'){
+    if(u.id==='luck')upLuck=Math.min(LUCK_FULL,upLuck+u.vals[r]);
+    else upCrit+=u.vals[r];
+  }
   else if(u.id==='shield')shield=true;
 }
-/* Auto levelling takes the best card on the table: highest rarity first, then
-   the biggest number on it, and a coin toss between genuine ties. A shield or
-   an extra life carries no percentage, so it counts as zero on that tie-break
-   but still wins on its own rarity. */
+/* Auto levelling takes the rarest card on the table, and chooses at random
+   between cards that tie on rarity.
+   It used to break those ties on the printed percentage, which quietly made
+   it an XP farm: XP GAIN carries the biggest numbers of any card - 50 at
+   insanity against damage's 30 - so whenever it appeared at the top rarity it
+   won. But +50% XP and +30% damage are not the same unit, and comparing them
+   by the number printed on the card is comparing nothing at all. Worse, the
+   one it kept choosing was the one that generates more levels, which feeds
+   the loop that deals more cards. */
 function autoPick(){
-  var tied=[],br=-1,bp=-1,i,c,r,pct;
+  var tied=[],br=-1,i,r;
   for(i=0;i<choices.length;i++){
-    c=choices[i];r=c.r;
-    pct=(c.u.kind==='once')?0:c.u.vals[c.r];
-    if(r>br||(r===br&&pct>bp)){br=r;bp=pct;tied=[i];}
-    else if(r===br&&pct===bp)tied.push(i);
+    r=choices[i].r;
+    if(r>br){br=r;tied=[i];}
+    else if(r===br)tied.push(i);
   }
   return tied[Math.floor(Math.random()*tied.length)];
 }
@@ -1521,19 +1660,55 @@ function applyChoice(i,force){
    START_LIVES with nothing banked. */
 /* A run started from the wave picker is a test, so it never touches BEST. */
 var testRun=false,startedAt=1,pickBuf='';
+/* One level-up, resolved the way AUTO LEVEL resolves it: deal the same three
+   cards the real screen would, take the rarest, and choose at random between
+   any that tie. */
+function simCard(){
+  var pool=[],i,u,three,r,br=-1,tied=[],c;
+  for(i=0;i<UPGRADES.length;i++){
+    u=UPGRADES[i];
+    if(u.off||u.kind==='once')continue;
+    if(u.id==='critd'&&upCrit<=0)continue;
+    if(u.id==='luck'&&upLuck>=LUCK_FULL)continue;
+    pool.push(u);
+  }
+  if(!pool.length)return;
+  shuffle(pool);
+  three=pool.slice(0,CARDS);
+  for(i=0;i<three.length;i++){
+    r=rollRarity();
+    if(r>br){br=r;tied=[{u:three[i],r:r}];}
+    else if(r===br)tied.push({u:three[i],r:r});
+  }
+  c=tied[Math.floor(Math.random()*tied.length)];
+  grantUpgrade(c.u,c.r);
+}
 function jumpToWave(n){
   n=Math.max(1,Math.min(MAXWAVE,Math.round(n)));
   reset();
   testRun=true;startedAt=n;
-  var ids,u,i;
-  for(i=1;i<n;i++){
-    ids=['fire','dmg','luck','crit','xp'];
-    if(upCrit>0)ids.push('critd');          /* crit damage is dead weight with no crit */
-    u=upById(ids[Math.floor(Math.random()*ids.length)]);
-    grantUpgrade(u,rollRarity());
-    level++;
+  /* It used to hand out exactly one random upgrade per wave skipped, so wave
+     100 arrived at level 100 with 99 cards taken at random rarities. That is
+     not a run: by wave 100 XP gain has compounded and you would be several
+     times that level, and AUTO LEVEL would have been taking the rarest card
+     on every table rather than any card at all.
+     So play the economy forward instead - each wave's XP at the multiplier
+     you have earned by then, levelling exactly as the real loop does, and
+     taking cards the way AUTO LEVEL does. The level you land on is whatever
+     that produces. */
+  var i,w,d,k,base;
+  for(w=1;w<n;w++){
+    d=waveDef(w-1);
+    base=0;
+    for(k in d.mix)if(TYPES[k])base+=d.mix[k]*TYPES[k].xp;
+    if(d.boss)base+=bossFor(w-1).xp;
+    base+=25*w;                              /* the clear bonus */
+    score+=base;
+    xp+=Math.max(1,Math.round(base*upXp));
+    while(xp>=xpNeed){xp-=xpNeed;level++;xpNeed=xpForLevel(level);simCard();}
   }
-  xp=0;xpNeed=xpForLevel(level);pendLv=0;choices=null;
+  ups=[];                                    /* no popups for upgrades you never saw */
+  pendLv=0;choices=null;
   startWave(n-1);
   hp=START_HP;shield=false;                  /* no freebies for skipping ahead */
   testRun=true;startedAt=n;  /* reset() cleared it, set it back */
@@ -1567,79 +1742,30 @@ function reset(){
   ship={x:W/2};
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];
   score=0;hp=START_HP;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
-  alarmT=0;dnums=[];overReason='';lvlFlash=0;
+  alarmT=0;dnums=[];ups=[];heals=[];overReason='';lvlFlash=0;
+  /* gameT goes back to 0 here, so a timestamp left over from the last run
+     would read as far in the future and silence the gun until it caught up */
+  shotSndT=-1;
   fireT=0;shake=0;invT=INVULN;lvlInvT=0;respawnT=0;blockT=0;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
-  upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];
+  upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];ups=[];
   startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;confirmAct='';
 }
 
 /* ================= spawning ================= */
-/* Every inbound hazard, expressed as "it owns this x for this slice of time".
-   Used to guarantee the player always has a physically reachable gap. */
+/* There was a fairness guard here: every spawn was tested to make sure the
+   player could still physically reach a gap, and held back if not. It is gone
+   on purpose. It was refusing between a third and sixty per cent of all spawn
+   attempts - worst in the middle of the run, where it had no depth scaling to
+   loosen it - so the screen stayed near-empty exactly when the difficulty was
+   supposed to be building. The game is meant to look impossible without a
+   good build, and a guard that promises you can always dodge cannot deliver
+   that. What remains is the lane clash test below, which only stops two
+   aliens being drawn on top of each other. */
 var PAD=HITW+4;
-function threatList(){
-  var out=[],i;
-  for(i=0;i<aliens.length;i++){
-    var a=aliens[i];
-    var t0=gameT+(SHIP_Y-(a.y+a.t.h))/a.spd,t1=gameT+((SHIP_Y+SHIP_H)-a.y)/a.spd;
-    if(t1<gameT)continue;
-    out.push({x:a.x,hw:a.t.w/2,t0:Math.max(gameT,t0),t1:t1});
-  }
-  for(i=0;i<rocks.length;i++){
-    var r=rocks[i];if(r.vy<=0)continue;
-    var e0=gameT+((SHIP_Y-r.r)-r.y)/r.vy,e1=gameT+((SHIP_Y+SHIP_H+r.r)-r.y)/r.vy;
-    if(e1<gameT)continue;
-    var mid=(Math.max(gameT,e0)+e1)/2;
-    out.push({x:r.x+r.vx*(mid-gameT),hw:r.r+(r.sweep||0),t0:Math.max(gameT,e0),t1:e1});
-  }
-  return out;
-}
-/* Can one ship be clear of both A and B? Overlapping in time needs a gap on
-   screen; separated in time needs the ship to physically cover the distance. */
-function dodgeable(A,B){
-  if(!(A.t1<B.t0||B.t1<A.t0)){
-    var spans=[[A.x-A.hw-PAD,A.x+A.hw+PAD],[B.x-B.hw-PAD,B.x+B.hw+PAD]];
-    spans.sort(function(p,q){return p[0]-q[0];});
-    var cursor=PAD;
-    for(var i=0;i<spans.length;i++){
-      if(spans[i][0]-cursor>5)return true;
-      cursor=Math.max(cursor,spans[i][1]);
-    }
-    return (W-PAD)-cursor>5;
-  }
-  var dt=(A.t1<B.t0)?(B.t0-A.t1):(A.t0-B.t1);
-  var need=Math.abs(A.x-B.x)-(A.hw+B.hw+2*PAD);
-  return need<=0||need<=GUARD_SPD*dt*0.9;
-}
-/* Is there a safe slot the ship can actually REACH in time, from where it
-   is standing right now? This is what makes every spawn survivable. */
-function reachableGap(cand,list){
-  var blocked=[[cand.x-cand.hw-PAD,cand.x+cand.hw+PAD]],i;
-  for(i=0;i<list.length;i++){
-    var o=list[i];
-    if(o.t1<cand.t0||cand.t1<o.t0)continue;
-    blocked.push([o.x-o.hw-PAD,o.x+o.hw+PAD]);
-  }
-  blocked.sort(function(p,q){return p[0]-q[0];});
-  var free=[],cur=PAD;
-  for(i=0;i<blocked.length;i++){
-    if(blocked[i][0]-cur>6)free.push([cur,blocked[i][0]]);
-    cur=Math.max(cur,blocked[i][1]);
-  }
-  if((W-PAD)-cur>6)free.push([cur,W-PAD]);
-  if(!free.length)return false;
-  var budget=GUARD_SPD*0.85*Math.max(0,cand.t0-gameT);
-  for(i=0;i<free.length;i++){
-    var near=Math.max(free[i][0],Math.min(ship.x,free[i][1]));
-    if(Math.abs(near-ship.x)<=budget)return true;
-  }
-  return false;
-}
-function clearOfAll(cand,list){
-  for(var i=0;i<list.length;i++)if(!dodgeable(cand,list[i]))return false;
-  return true;
-}
+/* how close two aliens may be as they come out of the bar, before it just
+   looks like one sprite drawn over another */
+var CLASH_Y=104,CLASH_X=46;
 
 /* Brutes are slow, tanky and wide, and two of them entering side by side at
    the same height is a wall: there is no gap to shoot through and not enough
@@ -1658,13 +1784,23 @@ var BRUTE_VGAP=2;
    together. */
 function maxOnScreen(t){
   if(!t||t.maxOn===undefined)return 1e9;
-  return Math.min(t.maxOn,1+Math.floor(wi/7));
+  /* The per-type limit is a shape rule for an ordinary wave, not a difficulty
+     setting, so it loosens as the run goes on. Held flat it became the main
+     brake: deep rosters are mostly heavies, so most of the queue sat blocked
+     and the spawner idled with a near-empty screen. */
+  return Math.min(t.maxOn+Math.floor(wi/40),1+Math.floor(wi/4));
 }
 /* Each heavy kind had its own limit, but nothing stopped four carapaces,
    four phantoms and two colossi sharing a screen. This is the ceiling on all
    of them together, so the light fast ones always have room to appear and a
    late wave is still a mix rather than a slab. */
-function maxHeavies(){return Math.min(6,2+Math.floor(wi/14));}
+function maxHeavies(){
+  /* Heavies may now take most of a screen rather than the old flat six, but
+     never all of it: a screen that is nothing but brutes is a solid wall with
+     no gap to shoot through or slip past, which is unwinnable rather than
+     hard. A quarter of the slots stay for the light fast ones. */
+  return Math.max(2,Math.min(20,2+Math.floor(wi/6),Math.round(conc*0.75)));
+}
 function heavyCount(){
   var n=0,i;
   for(i=0;i<aliens.length;i++)if(spacedKind(aliens[i].t))n++;
@@ -1726,28 +1862,23 @@ function spawnAlien(force){
     qi=alt;
   }
   var t=(queue[qi]==='boss')?bossFor(wi):TYPES[queue[qi]],i;
-  /* Rolled BEFORE the lane search below. SWIFT changes how fast this thing
-     arrives and the fairness guard reasons about arrival time, so rolling
-     affixes afterwards would quietly hand the player undodgeable spawns. */
-  var afx=rollAffixes(t),spd=t.spd*curw.spd*afx.swift,sy0=-t.h-2;
-  if(spacedKind(t))sy0=bruteSpawnY(t,sy0);
-  /* a diver ends up far faster than it starts, so the fairness guard has to
-     reason about the speed it will actually arrive at, not its opening crawl */
-  var guardSpd=t.accel?spd*t.accel:spd;
+  /* Flush against the underside of the HUD rather than above the canvas: an
+     alien that has not reached the playfield yet is completely behind the bar,
+     so there is nothing to see and nothing to shoot until it emerges. */
+  var afx=rollAffixes(t),spd=t.spd*curw.spd*afx.swift,sy0=HUD_H-t.h;
+  if(spacedKind(t)&&insDepth(wi+1)===0)sy0=bruteSpawnY(t,sy0);
   var order=[];for(i=0;i<LANES;i++)order.push(i);
   for(i=order.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1));var tm=order[i];order[i]=order[j];order[j]=tm;}
-  var threats=threatList(),lane=-1;
+  var lane=-1;
   for(i=0;i<order.length;i++){
+    /* the only test left: do not draw this one on top of something already
+       coming out of the bar */
     var lx=laneX(order[i]),clash=false;
     for(var a=0;a<aliens.length;a++)
-      if(aliens[a].y<104&&Math.abs(aliens[a].x-lx)<46){clash=true;break;}
-    if(clash)continue;
-    var cand={x:lx,hw:t.w/2,
-      t0:gameT+(SHIP_Y-(sy0+t.h))/guardSpd,t1:gameT+((SHIP_Y+SHIP_H)-sy0)/spd};
-    if(clearOfAll(cand,threats)&&reachableGap(cand,threats)){lane=order[i];break;}
+      if(aliens[a].y<CLASH_Y&&Math.abs(aliens[a].x-lx)<CLASH_X){clash=true;break;}
+    if(!clash){lane=order[i];break;}
   }
-  /* Nowhere fair to put it: hold the alien back rather than wall the player in.
-     The wave still finishes, it just breathes. */
+  /* every lane is occupied right at the top: wait a beat rather than stack */
   if(lane<0){
     if(!force)return false;
     var far=-1;
@@ -1767,8 +1898,10 @@ function spawnAlien(force){
   aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
     sh:sh0,shmax:sh0,
     quiet:0,ph:0,solid:true,
+    dir:(Math.random()<0.5?-1:1),drop:0,
     afx:afx.list,drp:afx.drp,regen:afx.regen,splits:afx.splits,
     bites:makeAlienBites(t,5+Math.floor(t.w/8))});
+  if(t.boss)sfx.bossIn();        /* only once it is really on screen */
   return true;
 }
 
@@ -1791,10 +1924,7 @@ function spawnMeteor(){
     var cross=gameT+(LINE_Y-sy)/vy;               /* when it reaches the line */
 
     var e0=gameT+((SHIP_Y-r)-sy)/vy,e1=gameT+((SHIP_Y+SHIP_H+r)-sy)/vy;
-    var mid=(e0+e1)/2,sweep=Math.abs(vx)*(e1-e0)/2;
-    var cand={x:sx+vx*(mid-gameT),hw:r+sweep,t0:e0,t1:e1};
-    var tl=threatList();
-    if(!clearOfAll(cand,tl)||!reachableGap(cand,tl))continue;  /* would pinch the player */
+    var sweep=Math.abs(vx)*(e1-e0)/2;
 
     var shi=Math.floor(Math.random()*def.shapes.length);
     var rhp=def.hp*(1+wi*0.015);
@@ -1808,6 +1938,42 @@ function spawnMeteor(){
 
 /* ================= damage numbers ================= */
 var dnums=[];
+/* Green pluses lifting off whatever a knitter is mending. Without them the
+   healing is invisible - health bars creep back up and you cannot see which
+   alien is being kept alive, or that anything is doing it. */
+var heals=[];
+function healPop(x,y){
+  if(heals.length>60)return;
+  heals.push({x:x+(Math.random()*12-6),y:y,vy:-20-Math.random()*12,life:0.8});
+}
+function drawHeals(){
+  for(var i=0;i<heals.length;i++){
+    var h=heals[i],x=Math.round(h.x),y=Math.round(h.y);
+    ctx.globalAlpha=Math.max(0,Math.min(1,h.life/0.4));
+    ctx.fillStyle='#6bff8f';
+    ctx.fillRect(x+2,y,1,5);ctx.fillRect(x,y+2,5,1);
+  }
+  ctx.globalAlpha=1;
+}
+/* Upgrade popups, bottom right, stacking upward and fading like the damage
+   numbers so a run that levels every second still reads. */
+var ups=[];
+var UP_LIFE=2.0;
+function upColour(id){
+  if(id==='fire')return C_FIRE;
+  if(id==='dmg')return C_DMG;
+  if(id==='luck')return C_LUCK;
+  if(id==='crit')return C_CRIT;
+  if(id==='critd')return C_CRITD;
+  if(id==='xp')return C_XP;
+  return '#8fe9ff';                 /* shield, and anything added later */
+}
+function upPop(u,r){
+  if(!u)return;
+  var label=(u.kind==='once')?u.name:(u.name+' +'+u.vals[r]+'%');
+  ups.push({s:label,col:upColour(u.id),life:UP_LIFE,max:UP_LIFE});
+  if(ups.length>10)ups.shift();     /* a long ladder would run off the top */
+}
 /* How much room a label would have at this spot: the distance to the nearest
    sprite edge on the same row, negative if it would land on one. */
 function clearanceAt(px,half,cy){
@@ -1879,6 +2045,17 @@ function drawDmgNums(){
     var d=dnums[i];
     ctx.globalAlpha=Math.max(0,Math.min(1,d.life/d.max));
     txt(d.crit?(d.v+'!'):(''+d.v),d.x,d.y,d.crit?'#ffd34d':'#e8f2ff',true);
+  }
+  ctx.globalAlpha=1;
+}
+/* Newest at the bottom, older ones pushed up the stack. */
+function drawUpPops(){
+  for(var i=0;i<ups.length;i++){
+    /* above the ship, not below it, and held off the right edge */
+    var u=ups[ups.length-1-i],y=SHIP_Y-16-i*9;
+    if(y<40)break;
+    ctx.globalAlpha=Math.max(0,Math.min(1,u.life/0.45));
+    txt(u.s,W-10-txtW(u.s),y,u.col);
   }
   ctx.globalAlpha=1;
 }
@@ -2240,10 +2417,41 @@ function drawShipMark(x,y,k){
 function menuTop(){return Math.round(H*0.045);}
 /* There used to be a strapline here. With it gone the board moves up to close
    the gap rather than leaving a hole where the text was. */
-var LB_ROWS=5,LB_RH=20;
+/* Two lines to a row. On one line the numbers took everything and a name was
+   clipped to five characters - SOFIHATTA came out as SOFIH. The name now has
+   the top line to itself and the figures sit beneath it, which costs 8px a
+   row and still leaves room under the panel for the hint and the buttons. */
+var LB_ROWS=5,LB_RH=28;
+/* Five is the number we want, and on a phone five is what you get. The row
+   is two lines deep so that a long name is never cut to fit a long score,
+   which costs height - and on a very short canvas the four menu buttons below
+   cannot then reach their minimum size without running into the footer. There
+   the board gives up a row rather than the menu giving up a button. */
+function lbRows(){
+  var n=LB_ROWS;
+  while(n>3&&lbTop()-10+(n*LB_RH+14)+22+(4*26+3*5)>H-46)n--;
+  return n;
+}
+/* The build badge's two dials. TB_BOB is how far it travels from centre, in
+   whole pixels because the glyphs are pixels - there is no half step between 1
+   and 2. Both the bob's own cap and the wordmark lift below are derived from
+   these, so changing one number moves everything that depends on it. */
+var TB_CLEAR=2,TB_BOB=1;
 function lbTop(){return menuTop()+21+Math.round(H*0.040)+26;}
+/* The wordmark normally sits at the top of the menu stack, but on a canvas
+   squashed to the 1.50 aspect floor the gap beneath it is 11px, which a 7px
+   badge cannot bob inside without touching the wordmark or the heading under
+   it. The board cannot give the space back - on those canvases it is already
+   down to four rows - so the wordmark lifts by the shortfall instead, which
+   costs nothing but the air above it and leaves the rest of the stack where it
+   was. Tall screens have the room already and are untouched. */
+function titleY(){
+  var want=FH+TB_CLEAR*2+TB_BOB*2;           /* glyph, its air, and room to bob */
+  var have=(lbTop()-30)-(menuTop()+FH*3);
+  return Math.max(4,menuTop()-Math.max(0,want-have));
+}
 function menuStackEnd(){var p=lbPanel();return p.y+p.h+14;}
-function lbPanel(){return {x:12,y:lbTop()-10,w:W-24,h:LB_ROWS*LB_RH+14};}
+function lbPanel(){return {x:12,y:lbTop()-10,w:W-24,h:lbRows()*LB_RH+14};}
 var C_GOLD='#ffd34d';
 /* Insanity has one colour wherever it is marked - the board and the HUD - so
    a purple wave number means the same thing in both places. */
@@ -2270,27 +2478,21 @@ function nameOkRect(){var c=nameCard(),l=nameLaterRect();
   if(promptMode==='show')return {x:c.x+14,y:nameBtnTop(),w:c.w-28,h:24};
   return {x:l.x+l.w+10,y:l.y,w:c.w-28-l.w-10,h:24};}
 
-/* one row of the board, shared by the menu and the full screen */
-/* rank | ship | name | WAVE n | SCORE n.  The two labels are measured and
-   right-packed first, and the name takes whatever is left, so a long name is
-   clipped instead of running under the numbers. */
+/* one row of the board, shared by the menu and the full screen.
+   Top line: rank, hull, name. Bottom line, indented under the name: the wave
+   and the score. Names run to 14 characters and the longest possible figures
+   are nowhere near the right edge, so nothing is ever clipped. */
 function drawLbRow(r,row,rank,me){
   if(me){ctx.fillStyle='rgba(143,233,255,0.10)';ctx.fillRect(r.x,r.y,r.w,r.h);}
-  var cy=r.y+Math.round((r.h-FH)/2);
-  txt(rank,r.x+3,cy,rank<=3?'#ffd34d':'#5f6a7a');
-  drawShipMark(r.x+22,r.y+Math.round((r.h-SHIP.length)/2),row.ship);
-
-  var sTxt='SCORE '+row.score, wTxt='WAVE '+row.wave;
-  var sX=r.x+r.w-6-txtW(sTxt);
-  var wX=sX-10-txtW(wTxt);
+  var y1=r.y+4,y2=r.y+15;
+  txt(rank,r.x+3,y1,rank<=3?'#ffd34d':'#5f6a7a');
+  drawShipMark(r.x+20,r.y+Math.round((r.h-SHIP.length)/2),row.ship);
+  var nX=r.x+20+SHIPMARK_W+6;
+  txt(String(row.name||'ANON'),nX,y1,me?'#ffffff':'#9fd8ff');
+  var wTxt='WAVE '+row.wave,sTxt='SCORE '+row.score;
   /* past the gate the wave goes purple: that run was fought in insanity */
-  txt(wTxt,wX,cy,row.wave>MAXWAVE?C_INS:'#ffe066');
-  txt(sTxt,sX,cy,'#7fb4e8');
-
-  var nX=r.x+22+SHIPMARK_W+5;
-  var room=wX-6-nX;
-  var max=Math.max(1,Math.floor((room+1)/FADV));
-  txt(String(row.name||'ANON').slice(0,max),nX,cy,me?'#ffffff':'#9fd8ff');
+  txt(wTxt,nX,y2,row.wave>MAXWAVE?C_INS:'#ffe066');
+  txt(sTxt,nX+txtW(wTxt)+10,y2,'#7fb4e8');
 }
 function drawBoardBlock(){
   var p=lbPanel();panel(p,C_GOLD);
@@ -2299,12 +2501,12 @@ function drawBoardBlock(){
     txt(LB.busy?'LOADING':'NO RUNS YET',W/2,p.y+Math.round(p.h/2)-10,'#3f6490',true);
     txt(LB.busy?'':'BE THE FIRST',W/2,p.y+Math.round(p.h/2)+2,'#2e3f58',true);
   }else{
-    for(var i=0;i<Math.min(LB_ROWS,LB.rows.length);i++)
+    for(var i=0;i<Math.min(lbRows(),LB.rows.length);i++)
       drawLbRow(lbRowRect(i),LB.rows[i],i+1,LB.rows[i].id===playerId);
   }
   var rk=lbRank(),hint;
   if(LB.mode!=='live')hint='LOCAL ONLY - BOARD IS OFFLINE HERE';
-  else if(rk>LB_ROWS)hint='YOU ARE #'+rk+'  -  TAP FOR THE FULL BOARD';
+  else if(rk>lbRows())hint='YOU ARE #'+rk+'  -  TAP FOR THE FULL BOARD';
   else hint='TAP FOR THE FULL BOARD';
   txt(hint,W/2,p.y+p.h+5,'#2e3f58',true);
 }
@@ -2354,7 +2556,7 @@ function enterInsanity(){
 function toMenu(){
   state=MENU;setPage=0;pickBuf='';running=false;confirmAct='';MUS.stop();
   lbLoad(BOARD_ERA);                /* the menu is always the live board */
-  aliens=[];bullets=[];rocks=[];parts=[];shocks=[];dnums=[];
+  aliens=[];bullets=[];rocks=[];parts=[];shocks=[];dnums=[];ups=[];
   bannerT=0;alarmT=0;shake=0;
 }
 function menuPick(i){
@@ -2732,6 +2934,11 @@ function cardDetail(c){
 function inRect(r,x,y){return x>=r.x&&x<=r.x+r.w&&y>=r.y&&y<=r.y+r.h;}
 function down(e){
   e.preventDefault();ac();
+  /* Any previous drag is over, whatever ended it. Without this, a gesture the
+     system cancelled leaves dragChan latched on a slider, and the next touch
+     that moves at all drags that slider to wherever the finger happens to be -
+     which, for MASTER, silently sets the volume to zero and kills all sound. */
+  dragChan=-1;dragBoard=false;
   var mx=pxFromEvent(e),my=pyFromEvent(e),i;
   /* The card is drawn on top of everything, so it must be TESTED against the
      tap before everything, whatever screen is underneath. Sitting lower down
@@ -2806,6 +3013,8 @@ function down(e){
     return;
   }
   if(state===LEVELUP){
+    /* the gear first: this branch returns, so a check further down never runs */
+    if(inRect(GEAR,mx,my)){openSettings();return;}
     for(i=0;i<choices.length;i++){var rc=cardRect(i);
       if(my>=rc.y&&my<=rc.y+rc.h&&mx>=rc.x&&mx<=rc.x+rc.w){applyChoice(i);return;}}
     return;
@@ -2867,6 +3076,11 @@ window.addEventListener('mouseup',up);
 cv.addEventListener('touchstart',down,{passive:false});
 window.addEventListener('touchmove',move,{passive:false});
 window.addEventListener('touchend',up);
+/* touchcancel fires instead of touchend whenever the system takes the gesture
+   over - a notification, an edge swipe, an incoming call. It was unhandled, so
+   those interruptions left the drag running. */
+window.addEventListener('touchcancel',up);
+window.addEventListener('blur',up);
 
 /* ================= update ================= */
 function killAlien(a,i){
@@ -2897,10 +3111,10 @@ function killAlien(a,i){
    This replaces the old bonus for merely arriving at a boss wave. */
 function bossBounty(){
   var was=hp;
-  /* Below three hearts you are put back to exactly three. At three or above
-     the hull is rounded UP to the next whole heart, so a chipped 3.25 becomes
-     a clean 4 rather than a chipped 4.25 - the bounty always leaves you on a
-     whole number of hearts. Five is the cap. */
+  /* Below full you are put back to full, and three is the cap, so a boss
+     always leaves you on exactly three whole hearts. The rounding-up branch
+     is what used to carry you from three towards five; it now has nowhere
+     above the cap to go, which is the point. */
   hp=(hp<START_HP)?START_HP:Math.min(MAX_HP,(Math.floor(hp/SEG)+1)*SEG);
   if(hp>was){
     banner=(was<START_HP)?'HULL RESTORED':'HULL PATCHED';
@@ -2964,8 +3178,9 @@ function pushAliensBack(){
     var topY=-aliens[i].t.h-2;
     if(aliens[i].y<topY)aliens[i].y=topY;
   }
-  /* The clamp above collapses any brute stagger onto one line. Rebuild it. */
-  enforceBruteSpacing();
+  /* The clamp above collapses any brute stagger onto one line. Rebuild it -
+     but only where the stagger is a rule at all. */
+  if(insDepth(wi+1)===0)enforceBruteSpacing();
   for(i=0;i<10;i++)burst(ship.x+(Math.random()*120-60),H*0.55,2,'#8fe9ff',1.4);
 }
 function takeHit(cause,alienHit,dmg){
@@ -3034,6 +3249,8 @@ function update(dt){
      about spawning or fairness. */
   gameT+=dt;
   if(lvlLock>0)lvlLock-=dt;      /* ticks while the cards are up, not just in play */
+  if(luAnim<LU_ANIM)luAnim+=dt;
+  if(state===LEVELUP)luT+=dt;
   if(state!==PLAY)return;
   /* Just died: hold everything in place for a beat, play out the explosion,
      then hand the ship back into the same situation it was lost in. */
@@ -3074,7 +3291,9 @@ function update(dt){
   /* ---- bullets: aliens take damage, rocks eat the shot ---- */
   for(var b=bullets.length-1;b>=0;b--){
     var bu=bullets[b];bu.y-=BULLET_SPD*dt;
-    if(bu.y<-6){bullets.splice(b,1);continue;}
+    /* bullets die at the bar, not off the top: otherwise they fly up behind
+       the HUD and kill aliens the player cannot even see yet */
+    if(bu.y<HUD_H){bullets.splice(b,1);continue;}
     var gone=false;
     for(var i=0;i<aliens.length;i++){
       var a=aliens[i],aw=a.t.w/2;
@@ -3125,8 +3344,11 @@ function update(dt){
     }
   }
 
-  /* ---- aliens: fixed x, pure y travel ---- */
-  enforceBruteSpacing();
+  /* ---- aliens ---- */
+  /* The heavies are kept apart so two of them never form a wall you cannot
+     shoot through or slip past. That is a fair-play rule, and insanity is
+     where fair play stops: past the gate they land wherever they land. */
+  if(insDepth(wi+1)===0)enforceBruteSpacing();
   for(var j=aliens.length-1;j>=0;j--){
     var al=aliens[j];
     /* a diver starts slow and comes down like a thrown knife */
@@ -3145,7 +3367,55 @@ function update(dt){
       if(al.solid&&al.ph>=on){al.solid=false;al.ph=0;}
       else if(!al.solid&&al.ph>=off){al.solid=true;al.ph=0;}
     }
-    al.y+=al.spd*dt;
+    /* ---- how this one travels ---- */
+    var vy=al.spd,hw=al.t.w/2;
+    if(al.t.drift){
+      /* slides across while it falls, turning at the walls */
+      al.x+=al.dir*al.t.drift*VS*dt;
+      if(al.x<hw+2){al.x=hw+2;al.dir=1;}
+      else if(al.x>W-hw-2){al.x=W-hw-2;al.dir=-1;}
+    }
+    if(al.t.stair){
+      /* sideways until it reaches a wall, then a step down and back again.
+         It still creeps downward in between, or it would never leave. */
+      if(al.drop>0){
+        var step=Math.min(al.drop,al.spd*3.2*dt);
+        al.y+=step;al.drop-=step;vy=0;
+      }else{
+        al.x+=al.dir*al.t.stair*VS*dt;
+        vy=al.spd*0.22;
+        if(al.x<hw+2){al.x=hw+2;al.dir=1;al.drop=al.t.step*VS;}
+        else if(al.x>W-hw-2){al.x=W-hw-2;al.dir=-1;al.drop=al.t.step*VS;}
+      }
+    }
+    if(al.t.shove){
+      /* barges whatever is beside it out of the way as it comes down */
+      for(var sv=0;sv<aliens.length;sv++){
+        var ov=aliens[sv];
+        if(ov===al||ov.t.boss)continue;
+        var sdy=(ov.y+ov.t.h/2)-(al.y+al.t.h/2);
+        if(Math.abs(sdy)>al.t.h*0.7)continue;
+        var sdx=ov.x-al.x,reach=(al.t.w+ov.t.w)/2;
+        if(Math.abs(sdx)>=reach)continue;
+        var ohw=ov.t.w/2,dirx=(sdx===0?(Math.random()<0.5?-1:1):(sdx>0?1:-1));
+        ov.x=Math.max(ohw+2,Math.min(W-ohw-2,ov.x+dirx*al.t.shove*VS*dt));
+      }
+    }
+    if(al.t.heal){
+      /* mends everything around it, itself included only via its own regen */
+      var hr=al.t.healR*VS;
+      for(var hl=0;hl<aliens.length;hl++){
+        var oh=aliens[hl];
+        if(oh===al||oh.hp>=oh.max)continue;
+        var hdx=oh.x-al.x,hdy=(oh.y+oh.t.h/2)-(al.y+al.t.h/2);
+        if(hdx*hdx+hdy*hdy>hr*hr)continue;
+        oh.hp=Math.min(oh.max,oh.hp+oh.max*al.t.heal*dt);
+        /* one plus every so often, not one a frame */
+        oh.hpop=(oh.hpop||0)-dt;
+        if(oh.hpop<=0){oh.hpop=0.30;healPop(oh.x,oh.y+oh.t.h*0.3);}
+      }
+    }
+    al.y+=vy*dt;
     if(al.fl>0)al.fl-=dt;
     if(al.y>H+4){
       if(al.t.boss){runOver(al.t.nm.replace('THE ','')+' BROKE THROUGH',false);return;}
@@ -3181,9 +3451,16 @@ function update(dt){
     }
   }
 
+  for(var hv=heals.length-1;hv>=0;hv--){
+    var hh=heals[hv];hh.y+=hh.vy*dt;hh.vy*=0.93;
+    hh.life-=dt;if(hh.life<=0)heals.splice(hv,1);
+  }
   for(var dn=dnums.length-1;dn>=0;dn--){
     var dd=dnums[dn];dd.y+=dd.vy*dt;dd.vy*=0.92;
     dd.life-=dt;if(dd.life<=0)dnums.splice(dn,1);
+  }
+  for(var up=ups.length-1;up>=0;up--){
+    ups[up].life-=dt;if(ups[up].life<=0)ups.splice(up,1);
   }
   /* ---- particles ---- */
   for(var p=parts.length-1;p>=0;p--){
@@ -3199,7 +3476,12 @@ function update(dt){
   spawnT-=dt;
   if(queue.length&&aliens.length<conc&&spawnT<=0){
     if(spawnAlien(false)){spawnT=gap*(0.8+Math.random()*0.45);blockT=0;}
-    else{spawnT=0.25;blockT+=0.25;
+    else{
+      /* Retrying on a flat quarter second throttled the spawner below its own
+         gap: at depth the gap is well under that, so every block cost two
+         intervals rather than one. Retry on the gap itself. */
+      var rt=Math.min(0.25,gap);
+      spawnT=rt;blockT+=rt;
       if(blockT>6){spawnAlien(true);blockT=0;spawnT=gap;}}
   }
   if(mplan&&respawnT<=0){
@@ -3387,7 +3669,7 @@ function drawAliens(){
     }
     if(a.hp<a.max&&a.y>2){
       ctx.fillStyle='#3a0d0d';ctx.fillRect(x0,y0,bw,2);
-      ctx.fillStyle=a.hp/a.max>0.45?'#4fc01f':'#ffb03a';
+      ctx.fillStyle=hpBarCol(a.hp/a.max);
       ctx.fillRect(x0,y0,Math.max(1,Math.round(bw*a.hp/a.max)),2);
       y0-=3;
     }
@@ -3421,6 +3703,14 @@ function drawHeart(x,y,col){
    Column boundaries are picked by PIXEL AREA, not by column count - the heart
    is far wider in the middle than at the edges, so four equal column groups
    would not look like four equal quarters. These give 21/56/79/100%. */
+/* How much is LEFT, in four steps, so a bar reads at a glance rather than
+   flipping once at the halfway mark. */
+function hpBarCol(f){
+  if(f>0.75)return '#4fc01f';
+  if(f>0.50)return '#ffd34d';
+  if(f>0.25)return '#ff8a2b';
+  return '#ff5555';
+}
 var HEART_FROM=[11,8,5,3,0];      /* leftmost column still filled, by segment */
 var HEART_FULL='#ff4d6d',HEART_EMPTY='#4a1020';
 function drawHeartSeg(x,y,seg){
@@ -3486,15 +3776,40 @@ function rainbowBar(x,y,w,h,speed){
   }
 }
 function drawHud(){
-  ctx.fillStyle='rgba(5,4,12,0.78)';ctx.fillRect(0,0,W,29);
+  /* Solid, not see-through. The HUD is drawn after the playfield, so an opaque
+     bar is all it takes to keep aliens from showing through the score line -
+     and with the spawn moved down to meet it, they now slide out from under
+     the bar instead of drifting in from off-canvas above it. */
+  ctx.fillStyle='#120b22';ctx.fillRect(0,0,W,HUD_H);     /* a purple cast */
+  ctx.fillStyle='#432b6e';ctx.fillRect(0,HUD_H-1,W,1);   /* the bar's edge */
+  /* Everything here is measured and packed, not placed at a fixed column.
+     Six figures of score, four of level and a four-digit wave used to run
+     straight into each other, because every x was a constant chosen when the
+     numbers were small. Score anchors left, the hearts and gear anchor right,
+     and the wave sits against the hearts with whatever is between. */
   txt('SCORE '+String(score).padStart(6,'0'),2,4,'#9fd8ff');
-  txt('LV'+level,77,4,'#8fe9ff');
-  /* Past the gate there is no denominator to count towards, so the HUD shows
-     the depth instead and goes red to say which side of 100 you are on. */
-  if(wi+1>MAXWAVE)txt('W'+(wi+1)+'  INS',108,4,C_INS);
-  else txt('W'+(wi+1)+'/'+MAXWAVE,108,4,'#ffe066');
-  txt('XP '+xp+'/'+xpNeed,2,17,C_XP);
-  if(upXp>1){var xl='x'+upXp.toFixed(2);txt(xl,W-2-txtW(xl),17,C_XP);}
+  var heartsX=212-(Math.max(1,hearts())-1)*12;
+  /* No denominator: there is no last wave to count towards. Past the gate it
+     carries INS and goes purple to say which side of 100 you are on. */
+  /* The wave number sits dead centre and stays there: the same column before
+     and after the gate, so it does not jump sideways the moment INS appears.
+     INS hangs off its right rather than being part of the centred string. */
+  var ins=(wi+1>MAXWAVE),wTxt='W'+(wi+1),insW=ins?5+txtW('INS'):0;
+  var wX=Math.round((W-txtW(wTxt))/2);
+  /* never let it ride over the score on the left or the hearts on the right */
+  var scoreEnd=2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
+  wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-insW-txtW(wTxt)));
+  txt(wTxt,wX,4,ins?C_INS:'#ffe066');
+  if(ins)txt('INS',wX+txtW(wTxt)+5,4,C_INS);
+  /* second row: level, then the XP bar numbers, then the multiplier */
+  var lvTxt='LV'+level;
+  txt(lvTxt,2,17,'#8fe9ff');
+  var xl=(upXp>1)?('x'+upXp.toFixed(2)):'';
+  var xpTxt='XP '+xp+'/'+xpNeed;
+  var xpRoom=(xl?W-4-txtW(xl):W-2)-(2+txtW(lvTxt)+7);
+  if(txtW(xpTxt)>xpRoom)xpTxt='XP '+xpNeed;        /* tight: show the target */
+  if(txtW(xpTxt)<=xpRoom)txt(xpTxt,2+txtW(lvTxt)+7,17,C_XP);
+  if(xl)txt(xl,W-2-txtW(xl),17,C_XP);
   ctx.fillStyle='#13325e';ctx.fillRect(0,27,W,2);
   /* A level just landed, or the card screen is up: celebrate either way. The
      rainbow used to be the auto-level consolation prize for having no card
@@ -3530,28 +3845,135 @@ function drawStatGrid(y){
   statCell('XP',       upXp.toFixed(2)+'x',          C_XP,   207,y+24);
 }
 var STATGRID_H=41;
+/* A glare sweeping across the card, built from one-pixel slivers rather than
+   a rotated gradient so it costs nothing and needs no path work. It sweeps,
+   then rests, so a card does not strobe while it is being read. Only the top
+   two rarities get it, which is what makes them read as special. */
+/* The gold cards get an edge that will not sit still. A tooth every three
+   pixels, jittering one or two pixels outward, re-rolled nine times a second.
+   Slight on purpose: more amplitude than this and it stops reading as a card
+   with a serrated edge and starts reading as a broken border. */
+/* A column one pixel wide and three tall is a thin rectangle, not a spike.
+   Pointiness has to live in the SILHOUETTE, so the edge is built as actual
+   triangles: a baseline of one pixel everywhere, and every third row a peak
+   of two or three with its neighbours stepping back down to the baseline.
+   What you get along the edge is _/\_/\_ rather than a row of posts. */
+function jag(i,ph){
+  if(i%3!==1)return 1;              /* the shoulders, and the baseline */
+  var h=((i*2654435761)^(ph*40503))>>>0;
+  h=(h^(h>>>13))>>>0;
+  return 2+(h%5===0?1:0);           /* a point: usually two, sometimes three */
+}
+/* which specks are the bright tint this instant - about a third of them */
+function jagLit(i,ph){
+  var h=((i*374761393)^(ph*668265263))>>>0;
+  return ((h^(h>>>15))>>>0)%3===0;
+}
+/* A spur of one to three pixels at every row down the left and right edges,
+   so neither side has a bare stretch. Each is a single pixel wide and its
+   neighbours are different lengths, and that ragged silhouette is what reads
+   as serrated. Top and bottom are left clean on purpose: the card reads as a
+   card, with two torn sides rather than a fuzzy outline.
+   Drawn in two passes, one per colour, because setting fillStyle hundreds of
+   times a frame costs more than the fills themselves. */
+function cardSerrate(rc,t,col,hi){
+  var ph=Math.floor(t*12),pass,i,d,k,lit;
+  for(pass=0;pass<2;pass++){
+    ctx.fillStyle=pass?hi:col;
+    for(i=0;i<rc.h;i++){
+      d=jag(i+1733,ph);
+      for(k=1;k<=d;k++){
+        lit=jagLit((i+1733)*7+k,ph)?1:0;
+        if(lit!==pass)continue;
+        if(rc.x-k>=0)ctx.fillRect(rc.x-k,rc.y+i,1,1);
+      }
+      d=jag(i+2551,ph);
+      for(k=1;k<=d;k++){
+        lit=jagLit((i+2551)*7+k,ph)?1:0;
+        if(lit!==pass)continue;
+        if(rc.x+rc.w-1+k<W)ctx.fillRect(rc.x+rc.w-1+k,rc.y+i,1,1);
+      }
+    }
+  }
+}
+/* boost>1 is the insanity card: it catches the light nearly twice as often,
+   twice as bright and in a wider band, so there is no mistaking it for the
+   merely rare one above it. Alpha is taken from whatever is already set, so
+   the sweep fades in with the card instead of arriving at full strength. */
+/* It was two flat bands of white, which is why following it with your eye
+   showed a line sliding across rather than light catching an edge. It is now
+   a bright thin core with a long soft falloff either side: the alpha runs off
+   as the cube of the distance, so the middle is sharp and the shoulders fade
+   out to nothing. Drawn one offset at a time, outermost loop, so the alpha is
+   set nineteen times a card instead of once per pixel.
+   boost>1 is the insanity card: brighter, wider, and sweeping more often. */
+function cardShine(rc,t,boost){
+  var k=boost||1,cycle=(k>1)?1.5:2.6,p=(t%cycle)/1.0;
+  if(p>1)return;                      /* resting between sweeps */
+  var a0=ctx.globalAlpha;
+  ctx.save();
+  ctx.beginPath();ctx.rect(rc.x+1,rc.y+1,rc.w-2,rc.h-2);ctx.clip();
+  ctx.fillStyle='#ffffff';
+  var lead=rc.x-rc.h+(rc.w+rc.h)*p,half=(k>1)?10:8,peak=(k>1)?0.62:0.40,d,y,f,a;
+  for(d=-half;d<=half;d++){
+    f=1-Math.abs(d)/(half+1);f=f*f*f;
+    a=a0*peak*f;
+    if(a<0.012)continue;
+    ctx.globalAlpha=a;
+    for(y=0;y<rc.h;y++)ctx.fillRect(Math.round(lead+(rc.h-y)+d),rc.y+y,1,1);
+  }
+  ctx.globalAlpha=a0;ctx.restore();
+}
+/* eased 0..1: fast off the mark, settling rather than stopping dead */
+function luEase(delay){
+  var span=Math.max(0.05,LU_ANIM-delay),
+      p=Math.min(1,Math.max(0,(luAnim-delay)/span));
+  return 1-Math.pow(1-p,3);
+}
 function drawLevelUp(){
-  ctx.fillStyle='rgba(5,4,12,0.86)';ctx.fillRect(0,0,W,H);
+  var e=luEase(0);
+  ctx.fillStyle='rgba(5,4,12,'+(0.86*e).toFixed(3)+')';ctx.fillRect(0,0,W,H);
   /* The HUD is painted before this screen, so the scrim used to bury it.
      Drawing it again on top keeps score, wave, lives and the XP bar readable
-     while you are choosing - you pick a card knowing where you stand. */
+     while you are choosing - you pick a card knowing where you stand. It is
+     the one thing not animated: it was already on screen a frame ago. */
   drawHud();
-  var ys=luStack().ys;
-  txtBig('LEVEL UP'+(pendLv>1?' +'+(pendLv-1):''),W/2,ys[0],'#ffe066',2);
-  rainbowBar(W/2-54,ys[0]+18,108,2,300);
-  drawStatGrid(ys[1]);
-  txt('CHOOSE A CARD',W/2,ys[2],'#8fe9ff',true);
+  var ys=luStack().ys,hoff=Math.round((1-e)*7);
+  ctx.globalAlpha=e;
+  txtBig('LEVEL UP'+(pendLv>1?' +'+(pendLv-1):''),W/2,ys[0]+hoff,'#ffe066',2);
+  rainbowBar(W/2-54,ys[0]+18+hoff,108,2,300);
+  drawStatGrid(ys[1]+hoff);
+  txt('CHOOSE A CARD',W/2,ys[2]+hoff,'#8fe9ff',true);
+  ctx.globalAlpha=1;
   for(var i=0;i<choices.length;i++){
-    var c=choices[i],rc=cardRect(i),R=RARITY[c.r];
+    /* each card a beat behind the one above it, all at rest by LU_ANIM. The
+       hit test still uses cardRect, so taps never chase a moving target. */
+    var ce=luEase(i*0.035),rc0=cardRect(i),
+        rc={x:rc0.x,y:rc0.y+Math.round((1-ce)*16),w:rc0.w,h:rc0.h},
+        c=choices[i],R=RARITY[c.r];
+    /* A gold card twitches where it sits. One pixel, thirty times a second,
+       on both axes - enough to catch the eye without being legible as motion.
+       Only the drawing moves; cardRect, which the tap test uses, does not. */
+    if(c.r===3){
+      var jp=Math.floor(luT*30);
+      rc.x+=(jagLit(i*131+1,jp)?1:0)-(jagLit(i*131+2,jp)?1:0);
+      rc.y+=(jagLit(i*131+3,jp)?1:0)-(jagLit(i*131+4,jp)?1:0);
+    }
+    ctx.globalAlpha=ce;
     ctx.fillStyle='#0a0f1c';ctx.fillRect(rc.x,rc.y,rc.w,rc.h);
+    /* luT, not gameT+i: every glint starts together when the screen opens
+       and crosses in step, however many of them there are */
+    if(c.r>=2)cardShine(rc,luT,c.r===3?1.7:1);
     ctx.fillStyle=R.col;
     ctx.fillRect(rc.x,rc.y,rc.w,1);ctx.fillRect(rc.x,rc.y+rc.h-1,rc.w,1);
     ctx.fillRect(rc.x,rc.y,1,rc.h);ctx.fillRect(rc.x+rc.w-1,rc.y,1,rc.h);
     ctx.fillRect(rc.x,rc.y,5,rc.h);
+    if(c.r===3)cardSerrate(rc,gameT+i*1.7,R.col,'#fff3c4');  /* insanity only */
     txt(c.u.name,rc.x+15,rc.y+10,'#ffffff');
     if(c.u.kind!=='once')txt('+'+c.u.vals[c.r]+'%',rc.x+rc.w-32,rc.y+10,R.col,true);
     txt(cardDetail(c),rc.x+15,rc.y+30,c.u.kind==='once'?R.col:'#9fd8ff');
   }
+  ctx.globalAlpha=1;
 }
 /* little pixel icons for the menu rows */
 var IC_SPEAK=['....##.....','...###..#..','..####.#.#.','.#####.#.#.','.#####.#.#.',
@@ -3732,10 +4154,18 @@ function render(){
     }
     ctx.globalAlpha=1;
     drawShocks();
-    drawDmgNums();
+    drawHeals();drawDmgNums();drawUpPops();
     if(state===PLAY||state===LEVELUP||state===SETTINGS){drawShip();drawShield();}
     drawHud();
-    if(bannerT>0&&state===PLAY)txt(banner,W/2,H/2-24,'#ffe066',true);
+    if(bannerT>0&&state===PLAY){
+      /* Bigger than the body text, and purple once past the gate so the wave
+         itself says which side of 100 you are on. A boss banner carries its
+         name too, so it drops back a size rather than running off the edge. */
+      var bc=(wi+1>MAXWAVE)?C_INS:'#ffe066';
+      var bk=(txtBigW(banner,2)<=W-10)?2:1;
+      if(bk===2)txtBig(banner,W/2,H/2-28,bc,2);
+      else txt(banner,W/2,H/2-24,bc,true);
+    }
     if(testRun&&(state===PLAY||state===LEVELUP))
       txt('DEMO  FROM W'+startedAt,W/2,H-18,'#4fa3ff',true);
     if(alarmT>0){
@@ -3749,7 +4179,25 @@ function render(){
   if(state===PICK)drawPick();
   if(state===BOARD)drawBoard();
   if(state===MENU){
-    txtBigOut('VOID RUNNER',W/2,menuTop(),'#8fe9ff','#7a2fc4',3);
+    txtBigOut('VOID RUNNER',W/2,titleY(),'#8fe9ff','#7a2fc4',3);
+    /* Build badge, tucked under the wordmark's right shoulder and bobbing so it
+       reads as a note stuck on rather than part of the title. There is no room
+       beside the wordmark - at 3x it is 195 of the 256 columns - so it sits in
+       the gap between the title and the LEADERBOARD heading. That gap closes on
+       short screens, so the badge centres itself in whatever is there and the
+       bob shrinks to match rather than climbing into the heading. */
+    var tbTxt=VERSION+' ALPHA';   /* version first, stage after - as in 2.18.0-alpha */
+    var tbTop=titleY()+FH*3,tbGap=(lbTop()-30)-tbTop;
+    /* Keep TB_CLEAR of air above and below even at the top of the bob, and let
+       the bob take only what is left over. Filling the gap exactly reads as
+       touching the wordmark and the heading, which is how it looked on a
+       desktop window: there the canvas is squashed to the 1.50 aspect floor and
+       the gap is 11px for a 7px glyph. Widening the gap instead would push the
+       board down, and on those canvases it is already showing four rows rather
+       than five - not a trade worth making for a badge. */
+    var tbAmp=Math.max(0,Math.min(TB_BOB,Math.floor((tbGap-FH-TB_CLEAR*2)/2)));
+    var tbY=tbTop+Math.round((tbGap-FH)/2)+Math.round(Math.sin(gameT*3)*tbAmp);
+    txt(tbTxt,W/2+txtBigW('VOID RUNNER',3)/2-txtW(tbTxt),tbY,'#ff79c6');
     drawBoardBlock();
     for(var mi=0;mi<MENU_ITEMS.length;mi++){
       var mr=menuRect(mi),mlab=MENU_ITEMS[mi][0];
