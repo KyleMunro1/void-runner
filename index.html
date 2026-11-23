@@ -987,7 +987,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.19';
+var VERSION='V2.21';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1088,7 +1088,12 @@ var CARDS=3;
 var UPGRADES=[
   {id:'fire',  name:'FIRE RATE', kind:'mult',vals:[5,9,15,25], w:10},
   {id:'dmg',   name:'DAMAGE',    kind:'mult',vals:[6,11,18,30],w:10},
-  {id:'luck',  name:'LUCK',      kind:'add', vals:[3,6,10,16], w:8},
+  /* Luck compounds: more luck deals rarer cards, and a rarer luck card is
+     worth more, so the card's own value and where a run ends up are not the
+     same size of change. At [3,6,10,16] a wave-100 run sat around 160% luck,
+     only just into the band where rares lead, which left most of the curve
+     unseen. These land it near 240%. */
+  {id:'luck',  name:'LUCK',      kind:'add', vals:[4,7,12,19], w:8},
   {id:'crit',  name:'CRIT CHANCE',kind:'add',vals:[3,5,9,15],  w:8},
   {id:'critd', name:'CRIT DAMAGE',kind:'mult',vals:[10,18,28,45],w:8},
   {id:'xp',    name:'XP GAIN',    kind:'mult',vals:[10,20,32,50],w:9},
@@ -1228,6 +1233,7 @@ function noise(dur,vol){
    of exactly 30 also clips a gun firing AT 30 a second. A hair above lets
    thirty through cleanly and still holds the ceiling at thirty. */
 var SHOT_SND_MAX=32, shotSndT=-1;
+var LVL_SND_GAP=0.45, lvlSndT=-1;   /* stacked levels must not pile fanfares */
 var sfx={
   shoot:function(){
     if(gameT-shotSndT<1/SHOT_SND_MAX)return;
@@ -1263,6 +1269,21 @@ var sfx={
       setTimeout(function(){beep(f,0.24,0.070,'square');},140+i*115);});
     setTimeout(function(){beep(1568,0.55,0.075,'triangle');
                           beep(784,0.70,0.040,'sine');},140+5*115);},
+  /* ---- a level up: the boss fanfare's shape, half the length. Same rising
+     arpeggio into a ringing top note, but a bright sparkle instead of the
+     boss's boom, and it lands in about 0.7s rather than 1.4 - this fires
+     every level, not once a boss, so it cannot outstay its welcome. Gated,
+     because tapping quickly through several stacked levels would otherwise
+     overlap three of these at once. ---- */
+  level:function(){
+    if(gameT-lvlSndT<LVL_SND_GAP)return;
+    lvlSndT=gameT;
+    burstNoise(0.45,0.15,2400,500,0,'highpass');
+    beep(523,0.20,0.055,'triangle',700);
+    [784,1046,1568].forEach(function(f,i){
+      setTimeout(function(){beep(f,0.22,0.055,'square');},70+i*80);});
+    setTimeout(function(){beep(2093,0.34,0.050,'triangle');
+                          beep(1046,0.40,0.026,'sine');},70+3*80);},
   /* ---- 2. a boss arriving: low rumble under a rising figure ---- */
   bossIn:function(){
     burstNoise(1.20,0.26,300,70,0,'lowpass');
@@ -1607,6 +1628,7 @@ function openLevelUp(){
   /* Auto levelling reads the card for you and must not be held up by the lock,
      so it picks before the lock is armed. */
   if(autoLevel){applyChoice(autoPick(),true);return;}
+  sfx.level();
   lvlLock=LVL_LOCK;luAnim=0;luT=0;
 }
 function grantUpgrade(u,r){
@@ -1745,7 +1767,7 @@ function reset(){
   alarmT=0;dnums=[];ups=[];heals=[];overReason='';lvlFlash=0;
   /* gameT goes back to 0 here, so a timestamp left over from the last run
      would read as far in the future and silence the gun until it caught up */
-  shotSndT=-1;
+  shotSndT=-1;lvlSndT=-1;
   fireT=0;shake=0;invT=INVULN;lvlInvT=0;respawnT=0;blockT=0;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
   upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];ups=[];
@@ -2215,19 +2237,25 @@ function lbRecover(code){
 /* The board's era, deliberately NOT the version string. Cosmetic releases
    and bug fixes keep their scores; a release that changes what the game asks
    of a player starts a fresh table, and the old one stays readable beside it.
-   Era 1 is everything up to V1.73 - three enemy kinds and the old curve.
-   Era 2 begins at V1.74, where a new alien unlocks after every boss. */
-var BOARD_ERA='2', PREV_ERA='1';
+   Era 3 begins at V2.19 - ALPHA. The fairness guard is gone, the XP curve and
+   the card odds are rebuilt and heavies no longer keep their distance, so a
+   wave reached under era 2 is not the same achievement as that wave now.
+   Era 2, V1.74 to V2.18, is kept beside it as PREALPHA, read only.
+   Era 1, everything up to V1.73, is no longer shown. Nothing was deleted to
+   do that: the server keys scores under v<era>/, so dropping a tab only stops
+   reading that prefix and every row is still sitting in the store. */
+var BOARD_ERA='3', PREV_ERA='2';
 function majorVer(){return LB.era||BOARD_ERA;}
-function eraName(e){return e===BOARD_ERA?'CURRENT':'PREPATCH';}
 /* Your own run belongs to the current era, so it is only ever merged into
-   that board - never onto the prepatch one, which is now frozen history. */
+   that board - never onto the prealpha one, which is now frozen history. */
 function viewingCurrent(){return (LB.era||BOARD_ERA)===BOARD_ERA;}
 
 /* rows: [{id,name,wave,score,ship}]. mode: 'live' once the server answers,
    'local' when it cannot be reached, which is every artifact view since those
    pages are not allowed to call out. */
-var LB={rows:[],mode:'local',busy:false,err:'',scroll:0,era:'2'};
+/* era mirrors BOARD_ERA rather than repeating it: the two drifted apart when
+   the eras rotated and the board quietly kept loading the old one. */
+var LB={rows:[],mode:'local',busy:false,err:'',scroll:0,era:BOARD_ERA};
 
 function lbBest(){
   try{return JSON.parse(localStorage.getItem('vr_best')||'null');}catch(e){return null;}
@@ -2727,7 +2755,7 @@ function closeNamePrompt(save){
 /* ================= full leaderboard ================= */
 /* Two tabs across the top of the full board: the live table, and the frozen
    one from before the roster patch. */
-var BOARD_TABS=[['CURRENT','2'],['PREPATCH','1']];
+var BOARD_TABS=[['ALPHA','3'],['PREALPHA','2']];
 function boardTabRect(i){
   var gap=8,w=Math.round((W-32-gap)/2);
   return {x:16+i*(w+gap),y:40,w:w,h:18};
@@ -2754,7 +2782,7 @@ function drawBoard(){
   }
   txt(LB.mode==='live'
         ? (viewingCurrent()?(LB.rows.length+' RUNNERS')
-                           :(LB.rows.length+' RUNNERS  -  BEFORE THE ROSTER PATCH'))
+                           :(LB.rows.length+' RUNNERS  -  BEFORE THE ALPHA'))
         :'OFFLINE  -  THIS DEVICE ONLY',W/2,64,'#3f6490',true);
   var top=86,bot=H-56;
   ctx.save();ctx.beginPath();ctx.rect(0,top,W,bot-top);ctx.clip();
