@@ -631,10 +631,10 @@ var TYPES={
   scout:{spr:mk(SCOUT),rows:SCOUT,hp:20,spd:46*VS,xp:10,col:'#4fc01f',
          dth:'A SCOUT RAN YOU DOWN'},
   drone:{spr:mk(DRONE),rows:DRONE,hp:50,spd:34*VS,xp:25,col:'#c86bff',dth:'A DRONE RAN YOU DOWN'},
-  brute:{spr:mk(BRUTE),rows:BRUTE,hp:110,spd:24*VS,xp:60,col:'#ff5555',
+  brute:{spr:mk(BRUTE),rows:BRUTE,hp:100,spd:24*VS,xp:60,col:'#ff5555',
          maxOn:6,dth:'A BRUTE RAN YOU DOWN'},
   /* --- unlocked one at a time, each after a boss falls --- */
-  mite:    {spr:mk(MITE),    rows:MITE,    hp:20, spd:78*VS,xp:14, col:'#ffd34d',
+  mite:    {spr:mk(MITE),    rows:MITE,    hp:10, spd:78*VS,xp:14, col:'#ffd34d',
             dth:'A MITE RAN YOU DOWN'},
   /* the splitter already has a trick of its own, so it travels plainly */
   splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:80, spd:30*VS,xp:45, col:'#c8ff4d',
@@ -828,9 +828,13 @@ var BOSSES=[
 for(var bi=1;bi<BOSSES.length;bi++){
   var bv=BOSSES[bi],base=TYPES.boss;
   bv.spr=mk(bv.rows);
-  bv.hp=Math.round(720*bv.hpk);
+  /* Derived from the WARDEN rather than from a literal. These were written
+     as 720 and 500 - the WARDEN's numbers at the time - and stayed behind
+     when its health was rescaled, so every other boss quietly sat 20% under
+     where it belonged while the WARDEN alone kept up. */
+  bv.hp=Math.round(base.hp*bv.hpk);
   bv.spd=base.spd*bv.spk;
-  bv.xp=Math.round(500*bv.hpk);
+  bv.xp=Math.round(base.xp*bv.hpk);
   bv.boss=true;
   bv.dth='THE '+bv.nm.replace('THE ','')+' RAN YOU DOWN';
 }
@@ -1020,7 +1024,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.34';
+var VERSION='V2.38';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1046,7 +1050,11 @@ var MAXWAVE=100;
 function baseTotal(w){return Math.min(260,Math.round(5+(w-1)*1.45));}
 function baseConc(w){return Math.min(40,2+Math.floor((w-1)/3));}
 function baseGap(w){return Math.max(0.030,1.60*Math.pow(0.955,w-1));}
-function baseHp(w){return 1+(w-1)*0.07;}
+/* Health climbs 5% of base per wave, not 7%. At 7% a wave-100 enemy carried
+   7.93x its listed health and the mid game asked for more than a good build
+   could put out; 5% takes the whole curve down 25% by wave 100. Insanity
+   anchors on baseHp(100), so the cut carries past the gate unchanged. */
+function baseHp(w){return 1+(w-1)*0.05;}
 function baseSpd(w){return Math.min(2.6,1+(w-1)*0.030);}
 function waveDef(w){
   var boss=(w+1)%10===0,wave=w+1;
@@ -1494,8 +1502,8 @@ var stars=[];
 })();
 
 /* ================= state ================= */
-var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7;
-var state=MENU;
+var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7,INFO=8;
+var state=MENU,infoBack=MENU;   /* HOW TO PLAY returns where it came from */
 var ship,aliens,bullets,rocks,parts,queue,wi,curw,conc,gap,spawnT,mplan,mT,blockT;
 var level,xp,xpNeed,pendLv,choices;
 var score,hp,leaked,kills,shots,hits,dodged,broken,gameT;
@@ -1612,8 +1620,11 @@ function fromMenu(){return setBack===MENU;}
    change with a wave paused on screen. Mid-run the page carries only what is
    worth touching mid-run, which also buys back the room the HUD now needs. */
 function pageRows(){
+  /* HOW TO PLAY lives here rather than on the main menu, which cannot take a
+     fifth button: the shortest canvas this runs on leaves 121px under the
+     board for buttons that need 150, and four already need 119. */
   if(fromMenu())
-    return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
+    return [['HOW TO PLAY',''],['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
   /* RESUME first: it is what you want nine times out of ten when you opened
      this mid-run, and it was sitting at the bottom under the two that end it. */
   return [['RESUME',''],['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN','']];
@@ -1667,7 +1678,8 @@ function activateRow(i){
   if(i<0||i>=rows.length)return;
   var label=rows[i][0];
   sfx.pick();
-  if(label==='PROFILE')setPage=4;
+  if(label==='HOW TO PLAY'){infoBack=SETTINGS;state=INFO;}
+  else if(label==='PROFILE')setPage=4;
   else if(label==='SOUND')setPage=2;
   else if(label==='GAMEPLAY')setPage=3;
   else if(label==='MAIN MENU')askConfirm('menu');
@@ -2392,10 +2404,23 @@ var LB={rows:[],mode:'local',busy:false,err:'',scroll:0,era:BOARD_ERA};
    by definition, so a missing era counts as another era's too.
    The record it hides is not lost: it is on that era's board on the server,
    and that board is read only, so nothing here needs it any more. */
+/* The era test alone was not enough. A demo run used to be able to write
+   vr_best before anything checked whether it was a test, and that guard
+   arrived in V2.34 - but it only stopped NEW records. The poisoned one
+   already on the device survived it, carried the live era, and so passed
+   every test here. lbReconcile then pushed it back onto the board the moment
+   a real row existed to "correct", which is why deleting the row server-side
+   did not hold: the device simply posted it again on the next board load.
+   So a record now has to say which generation of this code wrote it. Anything
+   older cannot be vouched for and is ignored - once, on every device. The
+   cost is the stranded-run safety net for runs that predate the stamp; those
+   are already on the board, because reconcile only ever CORRECTS a row that
+   is on it. Bump LB_GEN only to retire records that cannot be trusted. */
+var LB_GEN='2';
 function lbBest(){
   try{
     var b=JSON.parse(localStorage.getItem('vr_best')||'null');
-    return (b&&b.era===BOARD_ERA)?b:null;
+    return (b&&b.era===BOARD_ERA&&b.gen===LB_GEN)?b:null;
   }catch(e){return null;}
 }
 /* The hull is stored WITH the run that earned it. Reading the current colour
@@ -2410,7 +2435,7 @@ function lbLocalRows(){
 function lbRememberLocal(wave,score){
   var cur=lbBest();
   if(!cur||wave>cur.wave||(wave===cur.wave&&score>cur.score)){
-    cur={wave:wave,score:score,ship:SHIP_THEMES[shipTheme].k,era:BOARD_ERA};
+    cur={wave:wave,score:score,ship:SHIP_THEMES[shipTheme].k,era:BOARD_ERA,gen:LB_GEN};
     try{localStorage.setItem('vr_best',JSON.stringify(cur));}catch(e){}
   }
   return cur;
@@ -2738,6 +2763,7 @@ function menuPick(i){
   var lab=MENU_ITEMS[i][0];
   sfx.pick();
   if(lab==='NEW RUN'){testRun=false;reset();}
+
   else if(lab==='DEMO MODE'){state=PICK;pickBuf='';}
   else if(lab==='SPACESHIP'){state=SETTINGS;setPage=1;setBack=MENU;}
   else{state=SETTINGS;setPage=0;setBack=MENU;}
@@ -3040,8 +3066,9 @@ window.addEventListener('keydown',function(e){
     return;
   }
   if(state===MENU&&askName)return;                /* the field owns the keys */
+  if(state===INFO){ac();sfx.pick();state=infoBack;return;}
   if(state===MENU){
-    if(k>='1'&&k<='3'){ac();menuPick(+k-1);return;}
+    if(k>='1'&&k<='4'){ac();menuPick(+k-1);return;}
     if(k==='l'){ac();sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
     if(k===' '||k==='enter'){ac();menuPick(0);return;}
     return;
@@ -3193,6 +3220,7 @@ function down(e){
       if(my>=rc.y&&my<=rc.y+rc.h&&mx>=rc.x&&mx<=rc.x+rc.w){applyChoice(i);return;}}
     return;
   }
+  if(state===INFO){sfx.pick();state=infoBack;return;}
   if(state===MENU){
     if(inRect(lbPanel(),mx,my)){sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
     for(i=0;i<MENU_ITEMS.length;i++)
@@ -4211,6 +4239,7 @@ var ROWSTYLE={
   'MAIN MENU':    {c:'#19d0c8',t:'#9ff4ee',i:IC_HOME},
   'PLAYER NAME':  {c:'#4fa3ff',t:'#bfe3ff',i:IC_EYE},
   'PROFILE':      {c:'#19d0c8',t:'#9ff4ee',i:IC_EYE},
+  'HOW TO PLAY':  {c:'#ffe066',t:'#fff3c4',i:IC_EYE},
   'BACK':         {c:'#4fc01f',t:'#b9ffa8',i:IC_BACK},
   'RESUME':       {c:'#4fc01f',t:'#b6ffb0',i:IC_PLAY},
   'SOUND':        {c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
@@ -4237,6 +4266,42 @@ function panel(r,col,fill){
   ctx.fillStyle=col;
   ctx.fillRect(r.x,r.y,r.w,1);ctx.fillRect(r.x,r.y+r.h-1,r.w,1);
   ctx.fillRect(r.x,r.y,1,r.h);ctx.fillRect(r.x+r.w-1,r.y,1,r.h);
+}
+/* Every stat in the colour it wears in the HUD, so this page and that bar
+   agree without anyone having to hold two palettes in their head. Lines are
+   broken by hand - txt does not wrap - and 40 characters is the most that
+   fits 256 columns with a margin either side.
+   The wording follows what the code actually does. The one that surprises
+   people is that a percentage card ADDS to its multiplier rather than
+   scaling it: upFire starts at 1 and a +25% card adds 0.25, so the tenth one
+   is worth exactly what the first was. */
+function infoRows(){return [
+  ['FIRE RATE',  C_FIRE, ['BULLETS A SECOND. STARTS AT 10.',
+                          'EACH CARD ADDS THE SAME STEP.']],
+  ['DAMAGE',     C_DMG,  ['WHAT ONE BULLET TAKES OFF. ALSO 10.',
+                          'CARDS ADD A STEP, THEY DO NOT COMPOUND.']],
+  ['CRIT CHANCE',C_CRIT, ['HOW OFTEN A SHOT CRITS. STARTS AT 0%.',
+                          '+5% IS FIVE SHOTS IN EVERY HUNDRED.']],
+  ['CRIT DAMAGE',C_CRITD,['WHAT A CRIT MULTIPLIES BY. 1.1X FIRST.',
+                          'NOT OFFERED UNTIL YOU CAN CRIT AT ALL.']],
+  ['LUCK',       C_LUCK, ['SHIFTS WHICH CARDS YOU ARE OFFERED.',
+                          '0% IS ALL COMMON. 1000% IS ALL GOLD.']],
+  ['XP GAIN',    C_XP,   ['MULTIPLIES XP, SO MORE LEVELS AND MORE',
+                          'CARDS. YOUR SCORE IS NOT AFFECTED.']],
+  ['HULL',       '#ff4d6d',['THREE HEARTS, FOUR SEGMENTS EACH.',
+                          'KILLING A BOSS PATCHES YOU BACK UP.']]
+];}
+function drawInfo(){
+  ctx.fillStyle='rgba(5,4,12,0.94)';ctx.fillRect(0,0,W,H);
+  txtBig('HOW TO PLAY',W/2,16,'#ffe066',2);
+  txt('WHAT EVERY CARD ACTUALLY DOES',W/2,34,'#3f6490',true);
+  var rows=infoRows(),y=50,i,j;
+  for(i=0;i<rows.length;i++){
+    txt(rows[i][0],10,y,rows[i][1]);
+    for(j=0;j<rows[i][2].length;j++)txt(rows[i][2][j],10,y+9+j*8,'#9fb4cf');
+    y+=9+rows[i][2].length*8+7;
+  }
+  txt('TAP ANYWHERE TO GO BACK',W/2,Math.min(y+6,H-16),'#6f8bb0',true);
 }
 function drawSettings(){
   ctx.fillStyle='rgba(5,4,12,0.90)';ctx.fillRect(0,0,W,H);
@@ -4385,6 +4450,7 @@ function render(){
     if(state===SETTINGS)drawSettings();
   }
 
+  if(state===INFO)drawInfo();
   if(state===PICK)drawPick();
   if(state===BOARD)drawBoard();
   if(state===MENU){

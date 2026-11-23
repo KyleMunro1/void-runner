@@ -61,25 +61,36 @@ function better(next: Row, prev: Row | null): boolean {
   return next.score > prev.score;
 }
 
-/* A one-off removal, and the only way one exists: there is no delete route,
+/* One-off removals, and the only way one exists: there is no delete route,
  * and a POST is accepted only if it BEATS the stored row, so a row that
  * should never have been written cannot be taken back from the client.
  *
- * This row is a demo run. The client used to remember a run before checking
- * whether it was a test, so a demo wrote itself into the device's record and
- * the next real run handed the board the demo's numbers. A demo jumped to
- * wave 79 starts on 273,754 and this row banked 275,937 - a few kills past
- * the jump - where a run genuinely played from wave 1 to 79 banks 361,900.
+ * Both rows are demo runs from the same device. The first got there because
+ * the client used to remember a run before checking whether it was a test.
+ * V2.34 fixed that, but only for NEW records: the poisoned one already in
+ * that browser survived, carried the live era, and was pushed back onto the
+ * board by lbReconcile the moment a real row existed for it to "correct" -
+ * so deleting the first row simply brought the second. V2.38 stamps the
+ * device record with the generation that wrote it and ignores anything
+ * older, which is what actually stops this; the removal below is only the
+ * cleanup, and it is pointless without that client fix.
+ *
+ * Wave 102 at 533,870 is 1,445 short of a FLAWLESS 102-wave run - nothing
+ * leaked in 102 waves - while implying 4.2% leaked across waves 100-102
+ * alone. Both cannot hold. Waves 1-99 were awarded by the jump, not played.
  *
  * Matched on what the board already shows in public, NOT on the player's id:
  * ids double as recovery codes and one must never sit in a public repo.
- * Idempotent - once the row is gone this matches nothing, forever - and it
- * rides along with the read that was happening anyway, so it costs no extra
+ * Idempotent - once a row is gone it matches nothing, forever - and it rides
+ * along with the read that was happening anyway, so it costs no extra
  * fetches. Safe to delete this block once it has run. */
-const PURGE = { major: "4", name: "SOFIHATTA", wave: 79, score: 275937 };
+const PURGE = [
+  { major: "4", name: "SOFIHATTA", wave: 79, score: 275937 },   /* already gone */
+  { major: "4", name: "SOFIHATTA", wave: 102, score: 533870 },
+];
 function isPurged(major: string, row: Row) {
-  return major === PURGE.major && row.name === PURGE.name &&
-         row.wave === PURGE.wave && row.score === PURGE.score;
+  return PURGE.some((p) => major === p.major && row.name === p.name &&
+                           row.wave === p.wave && row.score === p.score);
 }
 
 async function readBoard(major: string) {
