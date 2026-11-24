@@ -634,7 +634,17 @@ var TYPES={
   brute:{spr:mk(BRUTE),rows:BRUTE,hp:100,spd:24*VS,xp:60,col:'#ff5555',
          maxOn:6,dth:'A BRUTE RAN YOU DOWN'},
   /* --- unlocked one at a time, each after a boss falls --- */
-  mite:    {spr:mk(MITE),    rows:MITE,    hp:10, spd:78*VS,xp:14, col:'#ffd34d',
+  /* flat:1 means its health NEVER scales - one hit kills a mite on wave 1
+     and on wave 300 alike. A mite is a fast thing that gets in your way;
+     what makes it dangerous is that it is already on top of you, not that
+     it takes work to remove. Scaled with everything else it became a bullet
+     sponge the size of a pixel, which is the opposite of what it is for.
+     hp:10 stays and is NOT dead: rosterWeights reads it as the mite's bulk,
+     which is how often the kind arrives in a wave. Health is what it takes
+     to kill; bulk is what it counts as in the mix. Pointing the weighting
+     at flat instead would deal roughly three times as many mites, which is
+     a change to how a wave is composed and not what this is. */
+  mite:    {spr:mk(MITE),    rows:MITE,    hp:10, flat:1, spd:78*VS,xp:14, col:'#ffd34d',
             dth:'A MITE RAN YOU DOWN'},
   /* the splitter already has a trick of its own, so it travels plainly */
   splitter:{spr:mk(SPLITTER),rows:SPLITTER,hp:80, spd:30*VS,xp:45, col:'#c8ff4d',
@@ -687,6 +697,17 @@ var ROSTER=[
 var TIER_DECAY=0.62, TIER_FLOOR=0.10, TIER_INTRO=0.30;
 function tierOf(wave){return Math.floor((wave-1)/10);}
 
+/* How fast an alien's health compounds, per wave, for the WHOLE game. It is
+   declared here because INS_HP is derived from it below and must not be a
+   second copy of the same number - see baseHp for why this value. */
+var HP_GROW=1.040;
+/* The one place an alien's health is worked out. A type with flat set keeps
+   that number for the whole game; everything else rides the wave multiplier.
+   The SHIELDED affix and splitter children both read THIS rather than doing
+   the multiply themselves, so a flat type stays flat wherever it comes from
+   - spawned, split off a splitter, or shed by the SPLITTING affix. */
+function hpOf(t){return t.flat?t.flat:t.hp*curw.hp;}
+
 /* ================= insanity mode =================
    Past wave 100 the roster has nothing new left to unlock, and every dial
    that carried waves 1-100 is already pinned: enemies per wave caps at 21,
@@ -717,8 +738,19 @@ function tierOf(wave){return Math.floor((wave-1)/10);}
    Arrivals were 2.4 a second, permanently inside that ceiling, which is why
    1.7M damage and 80 damage played identically and the screen looked empty.
    So the spawn rate is now the lever that bites, health is eased off, and the
-   extra bodies go to the kinds that can actually fill a screen. */
-var INS_HP=1.030,        /* health multiplier, per wave past 100 */
+   extra bodies go to the kinds that can actually fill a screen.
+   That still holds for everything insanity escalates on its OWN - the spawn
+   gap, concurrency, speed and affixes all still do the work, and they are
+   what makes past-100 its own thing.
+   Health is no longer one of them. It used to climb at 1.030 here against
+   1+(w-1)*0.05 below, two unrelated rules meeting at the gate, and 1.030
+   LOST: damage per bullet compounds about 5% a wave through insanity -
+   measured, 1,330 at the gate and 16,900 by wave 151 - so the gap reopened
+   at two points a wave and an alien that took seven frames to kill at the
+   gate was back under one by 180. So health is now one curve for the whole
+   game and this is baseHp's own rate, not a copy of it: change HP_GROW and
+   the gate stays seamless by construction rather than by remembering. */
+var INS_HP=HP_GROW,      /* health: the SAME rate as waves 1-100 */
     INS_GAP=0.9745,      /* spawn gap shrinks by this each wave */
     INS_GAPMIN=0.012,    /* 83 arrivals a second at the floor */
     INS_CONC_EVERY=3,    /* one more alien allowed on screen every N waves */
@@ -778,7 +810,7 @@ function rollAffixes(t){
     o.list.push(k);
     if(k===0)o.drp=Math.min(0.60,0.18*p);
     else if(k===1)o.swift*=1+0.12*p;
-    else if(k===2)o.sh+=t.hp*curw.hp*0.45*p;
+    else if(k===2)o.sh+=hpOf(t)*0.45*p;
     else if(k===3)o.splits=2;
     else o.regen+=0.030*p;
   }
@@ -800,6 +832,9 @@ function rosterWeights(wave){
        of its size rather than straight in line with it. Every tier gets this,
        which is the point - the splitter and the colossus would each have
        walked into the same wall on arrival. */
+    /* .hp here is BULK, the kind's standing in the mix - deliberately not
+       hpOf(), which is what it actually takes to kill one. The mite is the
+       pair that comes apart: it is listed at 10 and dies to 1. */
     w/=Math.sqrt((TYPES[r.k]?TYPES[r.k].hp:DMG*2)/(TYPES.scout.hp));
     /* A newcomer eases in over its own decade rather than arriving at full
        strength: the wave after a boss used to leap straight to nine brutes. */
@@ -1032,7 +1067,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.51';
+var VERSION='V2.54';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1058,11 +1093,36 @@ var MAXWAVE=100;
 function baseTotal(w){return Math.min(260,Math.round(5+(w-1)*1.45));}
 function baseConc(w){return Math.min(40,2+Math.floor((w-1)/3));}
 function baseGap(w){return Math.max(0.030,1.60*Math.pow(0.955,w-1));}
-/* Health climbs 5% of base per wave, not 7%. At 7% a wave-100 enemy carried
-   7.93x its listed health and the mid game asked for more than a good build
-   could put out; 5% takes the whole curve down 25% by wave 100. Insanity
-   anchors on baseHp(100), so the cut carries past the gate unchanged. */
-function baseHp(w){return 1+(w-1)*0.05;}
+/* Health COMPOUNDS, at one rate, for every wave in the game. One line, no
+   knee, no second rule at the gate: INS_HP is this same number, so wave 101
+   is 4% up on wave 100 exactly as wave 7 is 4% up on wave 6, and the curve
+   past the gate is the identical curve continued.
+   It compounds because the PLAYER compounds and health did not. DAMAGE and
+   CRIT DAMAGE are both multiplier ladders with crit chance filling in
+   behind them, so damage per bullet MULTIPLIES about 5% a wave: measured on
+   a median run it goes from 62 to 774 between waves 50 and 90, a 12.5x
+   climb, while health added its way from 3.45x to 5.45x, a 1.6x one. A sum
+   cannot chase a product, and the gap was the whole bug - by wave 90 the
+   toughest thing on screen died to 0.7 of one bullet, under a single frame,
+   so a colossus and a scout were the same object and the roster the back
+   half exists to show off was being deleted on contact.
+   An earlier pass fixed that with a knee: linear to wave 50, compounding
+   after. It measured fine and it was wrong. A knee is a boundary the player
+   cannot see, so the game changes character at a wave with nothing on it -
+   and the curve either side of it was two rules to keep in step. This is
+   one rule, and the only boundary left is wave 100, which the player can
+   see and which is about affixes and spawn rate rather than health.
+   4% is chosen against what it costs the EARLY game, not the late one. It
+   tracks the old linear curve to within 10% out to about wave 21 - under it
+   for the first thirteen waves, over it after - so waves 1-20, the part
+   that was never the problem, are where they were. From there compounding
+   has had time to bite: wave 50 carries 6.8x rather than 3.45x, wave 100
+   48.6x rather than 5.95x, and the toughest alien holds three to six frames
+   through the back half instead of collapsing to half of one.
+   Raising it is tempting and the cost lands in the wrong place: 4.36%
+   reaches the same wave-100 figure the knee did, but it makes wave 40 79%
+   tankier rather than 56%, and waves 20-40 are where runs actually end. */
+function baseHp(w){return Math.pow(HP_GROW,w-1);}
 function baseSpd(w){return Math.min(2.6,1+(w-1)*0.030);}
 function waveDef(w){
   var boss=(w+1)%10===0,wave=w+1;
@@ -2055,7 +2115,7 @@ function spawnAlien(force){
   queue.splice(qi,1);
   var x=laneX(lane,LN)+Math.round((Math.random()*2-1)*5),half=t.w/2;
   x=Math.max(half+2,Math.min(W-half-2,x));
-  var hp=t.hp*curw.hp,sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
+  var hp=hpOf(t),sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
   aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
     sh:sh0,shmax:sh0,
     quiet:0,ph:0,solid:true,
@@ -3366,7 +3426,7 @@ function killAlien(a,i){
   /* killing a splitter does not clear the space, it fills it */
   var nsp=a.splits||a.t.splits||0;          /* type's own, or the affix */
   if(nsp){
-    var mt=TYPES.mite,n,sx,mhp=mt.hp*curw.hp;
+    var mt=TYPES.mite,n,sx,mhp=hpOf(mt);
     for(n=0;n<nsp;n++){
       sx=a.x+(n===0?-a.t.w*0.28:a.t.w*0.28);
       sx=Math.max(mt.w/2+2,Math.min(W-mt.w/2-2,sx));
