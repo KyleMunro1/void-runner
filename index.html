@@ -1016,15 +1016,23 @@ var LINE_Y=SHIP_Y+SHIP_H/2;   /* the line every meteor must cross */
    what the fairness guard reasons about, so move-speed upgrades buy real slack
    instead of licensing the spawner to place tighter gaps. */
 var upFire=1,upDmg=1,upLuck=0,upCrit=0,upCritD=1.1,upXp=1,shield=false;
-var dmgNumbers=true,autoLevel=false;
+var dmgNumbers=true,autoLevel=false,mouseSteer=true;
 try{var _dn=localStorage.getItem('vr_dmgnum');if(_dn!==null)dmgNumbers=(_dn==='1');}catch(e){}
+try{var _ms=localStorage.getItem('vr_msteer');if(_ms!==null)mouseSteer=(_ms==='1');}catch(e){}
+/* A real mouse, not a finger. Only such a machine is offered the steering
+   switch, because on a phone the row would be a setting for hardware that is
+   not there. */
+function hasMouse(){
+  try{return !!(window.matchMedia&&window.matchMedia('(pointer: fine)').matches);}
+  catch(e){return false;}
+}
 try{var _al=localStorage.getItem('vr_auto');if(_al!==null)autoLevel=(_al==='1');}catch(e){}
 function fireGap(){return 1/(FIRE_RATE*upFire);}
 function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.43';
+var VERSION='V2.51';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1161,93 +1169,56 @@ function upById(id){
 /* Kept for when the shield card comes back; nothing reads it while the card
    is flagged off. */
 var P_SHIELD=0.25;
-/* Luck drains weight out of COMMON and pushes it up the tiers. At 0% this is
-   exactly 75/20/4.5/0.5.
-   It used to stop meaning much past about 90%: the common drain was capped,
-   so the only thing left growing was a linear nudge to the upper tiers and
-   INSANITY crawled from 3.7% at 100% luck to 6.6% at 1000%.
-   Common now decays geometrically - always positive, never capped - and the
-   top two tiers grow with a square term, so every point of luck keeps paying
-   and a heavily invested run really does turn into a jackpot machine. The
-   0-100% range is left almost exactly where it was, so nobody's current
-   build changes under them. */
-/* The base weights sum to 100, so at zero luck the table reads straight off
-   as percentages. Luck bends them from there: commons collapse, and the top
-   two climb fastest, which is what makes a luck build feel like a different
-   game rather than a slightly better one. */
-/* The four tiers are a ladder, each a tenth as likely as the one above it,
-   and luck walks a single shape up that ladder rather than scaling any tier
-   on its own:
-     weight(tier) = 10 ^ (-|tier - centre| / spread)
-   The centre runs from COMMON to INSANITY as luck goes 0 to 1000%. The spread
-   is zero at both ends - no luck is every card common, full luck is every card
-   insanity - and fattens through the middle so no single tier runs away with
-   it.
-   What comes out is a wave travelling up the ladder, each tier leading for a
-   real stretch: commons to 170%, rare to 510%, ultra to 840%, insanity from
-   there to the cap. It is symmetric about halfway, so the odds at 900% are
-   those at 100% read backwards, and at 500% all four sit at 12/38/38/12.
-   Past the cap nothing moves and the LUCK card stops being dealt, so a maxed
-   build is never offered a card that does nothing. */
-/* RARE_EARLY gives the rare tier a head start, fading out as luck climbs so
-   the rest of the curve is left exactly where it was.
-   Two other ways of doing this were tried and are worse. Widening the spread
-   lifts all four tiers at once and nearly doubled the insanity chance at 100%
-   luck. Lifting the centre off its line brings rare forward but drags ultra
-   and insanity along behind it. Boosting the one tier takes its extra share
-   from whatever dominates at that point - which early on is almost entirely
-   common - so golds actually get RARER: 0.40% at 100% luck against 0.46%
-   before, and 2.09% at 200% against 2.47%.
-   Tuned to put rare at 20% of the table by 50% luck, which lands it leading
-   from 120% instead of 170% while the ultra and insanity handovers stay at
-   515% and 835%.
-   There is a ceiling: push the boost far enough and it holds rare's share up
-   after it should be falling, which breaks the one-way climb. A faster fade
-   buys room, because it spends the boost where it is wanted and is gone by
-   the middle - at fade 3 this target sat 6% under the ceiling, at fade 4 it
-   sits 19% under. That is why the fade is 4 and not 3. */
-/* The odds of each rarity being offered, from no luck to the cap.
-   Two parts, doing two different jobs.
-   The WINDOW is what makes the tiers arrive in ORDER - rare, then ultra, then
-   gold. A single growth rate per tier cannot do that: for blues to surge
-   early they would have to climb faster than gold, and then gold could never
-   overtake them. LUCK_WARP runs the window on u^WARP so the whole sequence
-   happens earlier, in the 0-200% band where the game is actually played,
-   while 1000% luck still lands on pure gold exactly.
-   The SEED is the starting mix, so wave 1 is not a wall of grey. It is held
-   flat below SEED_FROM and blended out by SEED_TO. Held flat because down
-   there the window is MORE common-heavy than the seed, so blending straight
-   from zero made the gold chance FALL as luck rose - 0.100% down to 0.094% -
-   which is the wrong direction for the one stat whose job is to raise it.
-   Both ends are exact rather than approached: zero luck is the seed itself,
-   and the cap short-circuits to gold. */
-var LUCK_FULL=1000,LUCK_SPREAD=2.2,LUCK_WARP=0.70,
-    LUCK_SEED_FROM=0.02,LUCK_SEED_TO=0.06,RARE_EARLY=1.15,RARE_FADE=4;
-/* one entry per RARITY, in the same order */
-var LUCK_SEED=[0.95,0.04,0.009,0.001];
-function luckWindow(v){
-  var n=RARITY.length,w=[],i,t=0;
-  var sig=LUCK_SPREAD*Math.sqrt(Math.sin(Math.PI*v));
-  if(!(sig>0.004)){                     /* collapsed onto one end of the ladder */
-    for(i=0;i<n;i++)w.push(0);
-    w[v<0.5?0:n-1]=1;
-    return w;
-  }
-  var centre=(n-1)*v;
-  for(i=0;i<n;i++)w.push(Math.pow(10,-Math.abs(i-centre)/sig));
-  w[1]*=1+RARE_EARLY*Math.pow(1-v,RARE_FADE);   /* rare's head start */
-  for(i=0;i<n;i++)t+=w[i];
-  for(i=0;i<n;i++)w[i]/=t;               /* normalised, so the blend is fair */
-  return w;
+/* The odds of each rarity being offered, as a table of anchor points with a
+   smooth curve drawn through them.
+   It used to be a formula - a window sliding along the rarity ladder, with a
+   starting mix blended in underneath and a floor under the spread. Three
+   mechanisms stitched together, and every seam showed: the first four luck
+   cards once did literally nothing (0% and 20% luck dealt identical odds),
+   and where the floor let go the odds suddenly moved three times faster.
+   Each fix was a patch on the last patch.
+   The table has no seams because there is nothing to stitch. Every row is a
+   mix someone chose, the curve joins them, and tuning is moving a number
+   rather than reasoning about spreads and warps. Rows must each sum to 100
+   and must not let any tier fall as luck rises; luckCheck below enforces
+   both, and the tests read this table rather than restating it. */
+var LUCK_FULL=1000;
+/* luck%, then the mix at that luck: common / rare / ultra / insanity */
+var LUCK_AT =[0,  50, 100, 150, 200, 250, 400, 600, 800,  1000];
+var LUCK_MIX=[[95,  4,  0.9, 0.1],
+              [60, 33,  6,   1  ],
+              [38, 48, 12,   2  ],
+              [28, 52, 17,   3  ],
+              [21, 53, 21,   5  ],
+              [16, 51, 26,   7  ],
+              [ 8, 38, 40,  14  ],
+              [ 3, 18, 49,  30  ],
+              [0.5, 5, 40,  54.5],
+              [ 0,  0,  0, 100  ]];
+/* Fritsch-Carlson monotone cubic. Monotone is the whole point: an ordinary
+   spline overshoots between anchors, and an overshoot here means a tier's
+   odds DIPPING as luck rises - the one thing a luck curve must never do, and
+   exactly the bug that was reported from play. */
+function luckAt(col,x){
+  var n=LUCK_AT.length,k=0;
+  if(x<=LUCK_AT[0])return LUCK_MIX[0][col];
+  if(x>=LUCK_AT[n-1])return LUCK_MIX[n-1][col];
+  while(x>LUCK_AT[k+1])k++;
+  var h=LUCK_AT[k+1]-LUCK_AT[k];
+  var y0=LUCK_MIX[k][col],y1=LUCK_MIX[k+1][col],d=(y1-y0)/h;
+  var dl=k>0?(y0-LUCK_MIX[k-1][col])/(LUCK_AT[k]-LUCK_AT[k-1]):d;
+  var dr=k<n-2?(LUCK_MIX[k+2][col]-y1)/(LUCK_AT[k+2]-LUCK_AT[k+1]):d;
+  var m0=(dl*d<=0)?0:2*dl*d/(dl+d);
+  var m1=(d*dr<=0)?0:2*d*dr/(d+dr);
+  var t=(x-LUCK_AT[k])/h,t2=t*t,t3=t2*t;
+  return y0*(2*t3-3*t2+1)+h*m0*(t3-2*t2+t)+y1*(-2*t3+3*t2)+h*m1*(t3-t2);
 }
 function rarityWeights(){
-  var n=RARITY.length,u=Math.max(0,Math.min(1,upLuck/LUCK_FULL)),w=[],i;
-  if(u>=1){for(i=0;i<n;i++)w.push(0);w[n-1]=1;return w;}
-  var m=(u-LUCK_SEED_FROM)/(LUCK_SEED_TO-LUCK_SEED_FROM);
-  m=Math.max(0,Math.min(1,m));
-  if(m<=0)return LUCK_SEED.slice(0,n);
-  var mv=luckWindow(Math.pow(u,LUCK_WARP));
-  for(i=0;i<n;i++)w.push((1-m)*LUCK_SEED[i]+m*mv[i]);
+  var n=RARITY.length,L=Math.max(0,Math.min(LUCK_FULL,upLuck)),w=[],i,t=0,v;
+  if(L>=LUCK_FULL){for(i=0;i<n;i++)w.push(0);w[n-1]=1;return w;}
+  for(i=0;i<n;i++){v=luckAt(i,L);if(!(v>0))v=0;w.push(v);t+=v;}
+  if(!(t>0)){for(i=0;i<n;i++)w[i]=0;w[0]=1;return w;}   /* never deal nothing */
+  for(i=0;i<n;i++)w[i]/=t;
   return w;
 }
 function rollRarity(){
@@ -1541,7 +1512,19 @@ var shocks=[];
 var alarmT,overReason='';
 var lvlFlash=0,running=false;
 var fireT,banner,bannerT,shake,invT,lvlInvT,respawnT,best=0,setPage=0;
-var keys={},ptr={active:false,x:W/2};
+var keys={},ptr={active:false,x:W/2},ptrHeld=false,onField=false;
+/* While hover steering has the ship, the ship IS the pointer and the arrow on
+   top of it is just clutter. It comes straight back over the HUD, where the
+   gear is, and on every screen with something to click - so it is never
+   hidden while you need to aim at anything. Written only when it changes:
+   assigning a style every frame is a layout thrash for nothing. */
+var cursorOff=false;
+function syncCursor(){
+  var want=(mouseSteer&&hasMouse()&&state===PLAY&&onField);
+  if(want===cursorOff)return;
+  cursorOff=want;
+  try{cv.style.cursor=want?'none':'';}catch(e){}
+}
 var dragBoard=false,dragY=0,dragFrom=0;
 
 /* The spawner only ever had five columns across a 256 wide screen, 51px
@@ -1671,9 +1654,11 @@ function pageRows(){
    stat guide underneath them - it is reachable from the main menu too, but
    this is the only way in from a paused run. */
 function gpRows(){
-  return [['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
-          ['AUTO LEVEL',autoLevel?'ON':'OFF'],
-          ['HOW TO PLAY','']];
+  var r=[['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
+         ['AUTO LEVEL',autoLevel?'ON':'OFF']];
+  if(hasMouse())r.push(['MOUSE STEER',mouseSteer?'ON':'OFF']);
+  r.push(['HOW TO PLAY','']);
+  return r;
 }
 /* The AUTO LEVEL caption used to hang under whatever row happened to be last.
    With a row added beneath it, that put the words directly under HOW TO PLAY,
@@ -1722,6 +1707,9 @@ function gpActivate(i){
     try{localStorage.setItem('vr_dmgnum',dmgNumbers?'1':'0');}catch(e){}}
   else if(lab==='AUTO LEVEL'){autoLevel=!autoLevel;sfx.pick();
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
+  else if(lab==='MOUSE STEER'){mouseSteer=!mouseSteer;sfx.pick();
+    if(!mouseSteer)ptr.active=false;        /* let go of the ship right away */
+    try{localStorage.setItem('vr_msteer',mouseSteer?'1':'0');}catch(e){}}
   else if(lab==='HOW TO PLAY'){sfx.pick();infoBack=SETTINGS;state=INFO;}
 }
 /* Dispatched on the row's label, not its position. The list differs between
@@ -1743,19 +1731,32 @@ function shuffle(a){
   for(var i=a.length-1;i>0;i--){var j=Math.floor(Math.random()*(i+1)),t=a[i];a[i]=a[j];a[j]=t;}
   return a;
 }
-function openLevelUp(){
-  var list=[],i,u;
-  /* Built from the table rather than named one by one, so a card flagged off
-     really is unreachable and clearing the flag really does bring it back. */
-  var stats=[];
+/* The one place the pool is decided. It used to be written out twice - here
+   and in simCard, which plays the economy forward for a demo jump - and when
+   CRIT DAMAGE stopped being held back only one copy was changed, so a
+   fast-forwarded build was dealt from five cards while a real one was dealt
+   from six. Seventh duplicated rule in this file to drift; derive, never
+   repeat.
+   CRIT DAMAGE used to be held back until you had crit chance to use it. Two
+   reasons it is not any more. A big crit damage card early is a REASON to go
+   looking for crit chance, which is a decision worth having. And holding one
+   card back shrank the pool from six to five, so with three dealt, every
+   other card - LUCK included - came up noticeably more often before you had
+   crit than after. The pool is the same size all run now, so no card's
+   frequency moves as the run goes. */
+function cardPool(){
+  var pool=[],i,u;
   for(i=0;i<UPGRADES.length;i++){
     u=UPGRADES[i];
     if(u.off||u.kind==='once')continue;
-    if(u.id==='critd'&&upCrit<=0)continue;   /* useless until you can crit */
     if(u.id==='luck'&&upLuck>=LUCK_FULL)continue;  /* maxed: would do nothing */
-    stats.push(u);
+    pool.push(u);
   }
-  list=list.concat(shuffle(stats)).slice(0,CARDS);
+  return pool;
+}
+function openLevelUp(){
+  var list=[],i,u;
+  list=list.concat(shuffle(cardPool())).slice(0,CARDS);
   shuffle(list);
   var picked=[];
   for(i=0;i<list.length;i++)
@@ -1787,6 +1788,13 @@ function grantUpgrade(u,r){
    by the number printed on the card is comparing nothing at all. Worse, the
    one it kept choosing was the one that generates more levels, which feeds
    the loop that deals more cards. */
+/* Highest rarity wins, ties broken at random, and nothing else is weighed -
+   not even a crit damage card with no crit chance behind it yet. That looked
+   like a card doing nothing, which is why this briefly filtered it out, but a
+   multiplier is banked for the rest of the run: take the gold now, find crit
+   chance later, and it pays from that point on. It is also what a player
+   does with that offer, and AUTO LEVEL is meant to play the way you would.
+   So rarity is the whole rule - do not add usefulness to it. */
 function autoPick(){
   var tied=[],br=-1,i,r;
   for(i=0;i<choices.length;i++){
@@ -1822,14 +1830,8 @@ var testRun=false,startedAt=1,pickBuf='';
    cards the real screen would, take the rarest, and choose at random between
    any that tie. */
 function simCard(){
-  var pool=[],i,u,three,r,br=-1,tied=[],c;
-  for(i=0;i<UPGRADES.length;i++){
-    u=UPGRADES[i];
-    if(u.off||u.kind==='once')continue;
-    if(u.id==='critd'&&upCrit<=0)continue;
-    if(u.id==='luck'&&upLuck>=LUCK_FULL)continue;
-    pool.push(u);
-  }
+  var i,three,r,br=-1,tied=[],c;
+  var pool=cardPool();
   if(!pool.length)return;
   shuffle(pool);
   three=pool.slice(0,CARDS);
@@ -3309,7 +3311,7 @@ function down(e){
   if(state===WIN){enterInsanity();return;}
   if(state===OVER){toMenu();return;}
   if(state!==PLAY)return;
-  ptr.active=true;ptr.x=mx;
+  ptr.active=true;ptr.x=mx;ptrHeld=true;
 }
 function move(e){
   if(dragBoard){
@@ -3321,9 +3323,24 @@ function move(e){
     if(dragChan>=0){e.preventDefault();chanSet(dragChan,pxFromEvent(e));}
     return;
   }
-  if(ptr.active){e.preventDefault();ptr.x=pxFromEvent(e);}
+  /* A HELD drag, which may wander anywhere on the page - the ship clamps to
+     the playfield and picks it back up on the way in. Hover steering raises
+     ptr.active too, so this must test the BUTTON rather than the flag: using
+     ptr.active here made the first hover turn every later move into a drag,
+     and the region check below never ran. */
+  if(ptrHeld){e.preventDefault();ptr.x=pxFromEvent(e);return;}
+  /* Steering without holding the button down. It takes over only while the
+     cursor is actually over the playfield - below the HUD bar and inside the
+     canvas - so reaching up for the gear, or leaving the canvas entirely,
+     parks the ship instead of dragging it into the wall on the way. A held
+     drag is handled above and still works anywhere on the page. */
+  if(mouseSteer&&hasMouse()&&state===PLAY&&e.type==='mousemove'&&!respawnT){
+    var hx=pxFromEvent(e),hy=pyFromEvent(e);
+    onField=(hx>=0&&hx<=W&&hy>=HUD_H&&hy<=H);
+    if(onField){ptr.x=hx;ptr.active=true;}
+  }
 }
-function up(){ptr.active=false;dragChan=-1;dragBoard=false;}
+function up(){ptr.active=false;ptrHeld=false;dragChan=-1;dragBoard=false;}
 cv.addEventListener('mousedown',down);
 /* Tracked on the WINDOW, not the canvas. Listening on the canvas meant the
    moment the cursor slid off the playfield the ship stopped following it and
@@ -4338,6 +4355,8 @@ function rowStyle(label){
     return dmgNumbers?{c:'#ffd34d',t:'#fff3c4',i:IC_HIT}:{c:'#5a6472',t:'#9aa7b5',i:IC_HIT};
   if(label==='AUTO LEVEL')
     return autoLevel?{c:'#ff5fd2',t:'#ffc4ef',i:IC_UP}:{c:'#5a6472',t:'#9aa7b5',i:IC_UP};
+  if(label==='MOUSE STEER')
+    return mouseSteer?{c:'#8fe9ff',t:'#d4f6ff',i:IC_STICK}:{c:'#5a6472',t:'#9aa7b5',i:IC_STICK};
   return ROWSTYLE[label]||{c:'#24405f',t:'#ffffff',i:null};
 }
 function drawIcon(rows,x,y,col){
@@ -4367,7 +4386,7 @@ function infoRows(){return [
   ['CRIT CHANCE',C_CRIT, ['HOW OFTEN A SHOT CRITS. STARTS AT 0%.',
                           '+5% IS FIVE SHOTS IN EVERY HUNDRED.']],
   ['CRIT DAMAGE',C_CRITD,['WHAT A CRIT MULTIPLIES BY. 1.1X FIRST.',
-                          'NOT OFFERED UNTIL YOU CAN CRIT AT ALL.']],
+                          'DOES NOTHING UNTIL YOU HAVE CRIT CHANCE.']],
   ['LUCK',       C_LUCK, ['SHIFTS WHICH CARDS YOU ARE OFFERED.',
                           '0% IS MOSTLY COMMON. 1000% IS ALL GOLD.']],
   ['XP GAIN',    C_XP,   ['MULTIPLIES XP, SO MORE LEVELS AND MORE',
@@ -4490,6 +4509,7 @@ function overlay(title,lines,tcol){
     txt(lines[i],W/2,H/2-26+i*12,i===lines.length-1?'#ffe066':'#7fb4e8',true);
 }
 function render(){
+  syncCursor();
   var ox=0,oy=0;
   if(shake>0){ox=(Math.random()*2-1)*shake;oy=(Math.random()*2-1)*shake;}
   ctx.save();ctx.translate(Math.round(ox),Math.round(oy));
