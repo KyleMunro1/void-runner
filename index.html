@@ -1024,7 +1024,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.39';
+var VERSION='V2.43';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1569,6 +1569,17 @@ var SET_ROW_H=26, SET_ROW_GAP=9;
 /* Mid-run the live HUD sits on top and the build is worth showing; from the
    menu there is no run, so both would be lying and neither is drawn. */
 function setShowsRun(){return !fromMenu();}
+/* The playfield sits behind every screen that is ON a run. SETTINGS is the
+   one screen reachable from both sides: paused mid-run it should show the run
+   it paused, but opened from the menu there is no run behind it - and the
+   ship and the HUD bar were being drawn over the stars anyway, reporting a
+   score of zero on wave 1 for a run that does not exist. Same predicate the
+   settings page already uses to decide whether to show its stat grid, so the
+   background and the page cannot disagree about whether a run is up. */
+function runBehind(){
+  return state===PLAY||state===OVER||state===WIN||state===LEVELUP||
+         (state===SETTINGS&&setShowsRun());
+}
 function setRowGap(n){
   var fixed=14+(setShowsRun()?FH+STATGRID_H+(shield?12:0):0)+FH;
   var avail=H-(setShowsRun()?HUD_H:0)-fixed-6*6;
@@ -1650,19 +1661,29 @@ function fromMenu(){return setBack===MENU;}
    change with a wave paused on screen. Mid-run the page carries only what is
    worth touching mid-run, which also buys back the room the HUD now needs. */
 function pageRows(){
-  /* HOW TO PLAY lives here rather than on the main menu, which cannot take a
-     fifth button: the shortest canvas this runs on leaves 121px under the
-     board for buttons that need 150, and four already need 119. */
   if(fromMenu())
-    return [['HOW TO PLAY',''],['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
+    return [['PROFILE',''],['SOUND',''],['GAMEPLAY',''],['BACK','']];
   /* RESUME first: it is what you want nine times out of ten when you opened
      this mid-run, and it was sitting at the bottom under the two that end it. */
   return [['RESUME',''],['SOUND',''],['GAMEPLAY',''],['MAIN MENU',''],['RESTART RUN','']];
 }
-/* setPage 3: the switches that change how the game itself plays */
+/* setPage 3: the switches that change how the game itself plays, and the
+   stat guide underneath them - it is reachable from the main menu too, but
+   this is the only way in from a paused run. */
 function gpRows(){
   return [['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
-          ['AUTO LEVEL',autoLevel?'ON':'OFF']];
+          ['AUTO LEVEL',autoLevel?'ON':'OFF'],
+          ['HOW TO PLAY','']];
+}
+/* The AUTO LEVEL caption used to hang under whatever row happened to be last.
+   With a row added beneath it, that put the words directly under HOW TO PLAY,
+   where they read as a description of it. It sits in the stack now, directly
+   under the row it is about, and everything below is pushed clear of it. */
+var GP_CAP=14;
+function gpCapAfter(){
+  var r=gpRows(),i;
+  for(i=0;i<r.length;i++)if(r[i][0]==='AUTO LEVEL')return i;
+  return -1;
 }
 /* setPage 4: who you are, and how to prove it on another phone. */
 function pfRows(){
@@ -1684,9 +1705,11 @@ function pfActivate(i){
   else openCodePrompt();
 }
 function gpRect(i){
-  var h=30,gap=12,n=gpRows().length,tot=n*h+(n-1)*gap;
+  var h=30,gap=12,n=gpRows().length,ca=gpCapAfter();
+  var pad=(ca>=0&&ca<n-1)?GP_CAP:0;        /* only when something is below it */
+  var tot=n*h+(n-1)*gap+pad;
   var top=Math.max(80,Math.round((H-56-tot)/2));
-  return {x:22,y:top+i*(h+gap),w:212,h:h};
+  return {x:22,y:top+i*(h+gap)+((ca>=0&&i>ca)?pad:0),w:212,h:h};
 }
 /* Dispatched on the row's LABEL. Dropping the METEORS row shifted every index
    below it, which is exactly how an index-based switch fires the wrong
@@ -1699,6 +1722,7 @@ function gpActivate(i){
     try{localStorage.setItem('vr_dmgnum',dmgNumbers?'1':'0');}catch(e){}}
   else if(lab==='AUTO LEVEL'){autoLevel=!autoLevel;sfx.pick();
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
+  else if(lab==='HOW TO PLAY'){sfx.pick();infoBack=SETTINGS;state=INFO;}
 }
 /* Dispatched on the row's label, not its position. The list differs between
    the menu and a paused run and has been reordered more than once; an
@@ -1708,8 +1732,7 @@ function activateRow(i){
   if(i<0||i>=rows.length)return;
   var label=rows[i][0];
   sfx.pick();
-  if(label==='HOW TO PLAY'){infoBack=SETTINGS;state=INFO;}
-  else if(label==='PROFILE')setPage=4;
+  if(label==='PROFILE')setPage=4;
   else if(label==='SOUND')setPage=2;
   else if(label==='GAMEPLAY')setPage=3;
   else if(label==='MAIN MENU')askConfirm('menu');
@@ -2740,13 +2763,14 @@ function drawBoardBlock(){
   txt(hint,W/2,p.y+p.h+5,'#2e3f58',true);
 }
 /* NEW RUN takes the title's own blue so the top of the menu reads as one
-   piece. DEMO MODE is orange, but a lighter amber than the ORANGE hull's
-   #ef8420 on purpose: SPACESHIP is painted in the chosen hull colour and sits
-   directly above DEMO MODE, so the hull orange here made two adjacent buttons
-   identical and looked like a mistake. SPACESHIP's value below is only a
+   piece. HOW TO PLAY is a bright green, well clear of the GREEN hull's
+   #37a837: SPACESHIP is painted in the chosen hull colour and sits directly
+   above it, so a green at the hull's own brightness would make two adjacent
+   buttons look identical - the same trap the old DEMO MODE amber was picked
+   to avoid against the ORANGE hull. SPACESHIP's value below is only a
    fallback - the draw always overrides it with the hull. */
 var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#c86bff'],
-                ['DEMO MODE','#ff9a2e'],['SETTINGS','#ff6b6b']];
+                ['HOW TO PLAY','#5cff5c'],['SETTINGS','#ff6b6b']];
 /* The hull button is the one row whose frame and whose contents are coloured
    separately: the frame AND the label keep the purple that settings used to
    wear, and the hull you chose shows only in the ship sprite itself. Settings
@@ -2794,7 +2818,11 @@ function menuPick(i){
   sfx.pick();
   if(lab==='NEW RUN'){testRun=false;reset();}
 
-  else if(lab==='DEMO MODE'){state=PICK;pickBuf='';}
+  /* DEMO MODE used to sit here. The whole thing - the wave picker, the PICK
+     state, jumpToWave and the testRun guards that keep a demo off the board -
+     is still in place and still tested; only the way in was taken off the
+     menu. Putting it back is this line and one entry in MENU_ITEMS. */
+  else if(lab==='HOW TO PLAY'){state=INFO;infoBack=MENU;}
   else if(lab==='SPACESHIP'){state=SETTINGS;setPage=1;setBack=MENU;}
   else{state=SETTINGS;setPage=0;setBack=MENU;}
 }
@@ -3154,7 +3182,7 @@ function cardRect(i){
 /* one line per card saying exactly what the pick does */
 function cardDetail(c){
   var u=c.u,v=u.vals?u.vals[c.r]:0;
-  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  B/s';
+  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  B/S';
   if(u.id==='dmg') return upDmg.toFixed(2)+'x \u2192 '+(upDmg+v/100).toFixed(2)+'x  DAMAGE';
   if(u.id==='luck')return upLuck+'% \u2192 '+(upLuck+v)+'%  LUCK';
   if(u.id==='crit')return upCrit+'% \u2192 '+(upCrit+v)+'%  CRIT';
@@ -3732,12 +3760,7 @@ function update(dt){
 /* A real bitmap font: every pixel is placed on purpose, so it stays razor
    sharp at any zoom instead of going soft the way a rasterised 8px face does.
    Glyphs are cached per colour and blitted. */
-var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......',
-/* the one lowercase letter in the font, for the B/s label. Everything else
-   is drawn in caps, so txt resolves a character to its own glyph when it
-   has one and falls back to the uppercase otherwise - which leaves every
-   other lowercase letter behaving exactly as it did. */
-'s':'...........#####.....###.....#####.'};
+var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......'};
 var FW=5,FH=7,FADV=6,GCACHE={};
 function glyph(ch,col){
   var key=col+ch;
@@ -3750,25 +3773,21 @@ function glyph(ch,col){
   c.ch=ch;
   GCACHE[key]=c;return c;
 }
-/* A character keeps its own glyph if the font has one, and is drawn as its
-   uppercase if not. 's' is the only lowercase glyph there is, so this changes
-   nothing for any other text in the game. */
-function glyphKey(ch){return GLYPH.hasOwnProperty(ch)?ch:ch.toUpperCase();}
 function txt(str,x,y,col,center){
-  str=String(str);
+  str=String(str).toUpperCase();
   var sx=Math.round(center?x-(str.length*FADV-1)/2:x),yy=Math.round(y);
   for(var i=0;i<str.length;i++){
-    var g=glyph(glyphKey(str.charAt(i)),col);
+    var g=glyph(str.charAt(i),col);
     if(g)ctx.drawImage(g,sx+i*FADV,yy);
   }
 }
 function txtW(str){return String(str).length*FADV-1;}
 /* the same 5x7 glyphs blown up by a whole number, so they stay crisp */
 function txtBig(str,x,y,col,k){
-  str=String(str);
+  str=String(str).toUpperCase();
   var adv=FADV*k,sx=Math.round(x-(str.length*adv-k)/2),yy=Math.round(y),i,g;
   for(i=0;i<str.length;i++){
-    g=glyph(glyphKey(str.charAt(i)),col);
+    g=glyph(str.charAt(i),col);
     if(g)ctx.drawImage(g,0,0,FW,FH,sx+i*adv,yy,FW*k,FH*k);
   }
 }
@@ -3970,15 +3989,29 @@ function drawHeartSeg(x,y,seg){
    EDGE and the left x derived, so widening the heart cannot push it under the
    gear the way a hardcoded left x would. */
 var HEART_RIGHT=223, HEART_X=HEART_RIGHT-HEART_W;
-var GEAR={x:234,y:0,w:22,h:17};
-function drawGear(col,atx,aty){
-  var cx=(atx===undefined?GEAR.x+11:atx),cy=(aty===undefined?GEAR.y+8:aty);
+/* Centred on the purple like the hearts, and bigger now that the XP
+   multiplier has stopped sharing the row with it. The drawn centre comes from
+   this rect rather than from numbers of its own, so the art and the tap
+   target cannot drift apart. */
+var GEAR_K=1.4;
+var GEAR={x:234,y:2,w:22,h:22};
+/* k scales the whole gear: the radii are measured in unscaled space by
+   dividing the distance back down, and the tooth arms widen with it, so the
+   shape is the same drawing at any size rather than a thin gear with fat
+   teeth. k defaults to 1, which is the gear exactly as it was - the menu row
+   still draws it that size. */
+function drawGear(col,atx,aty,k){
+  k=(k===undefined?1:k);
+  var cx=(atx===undefined?GEAR.x+GEAR.w/2:atx),
+      cy=(aty===undefined?GEAR.y+GEAR.h/2:aty);
+  var R=Math.ceil(7*k),arm=Math.max(1,Math.round(k));
   ctx.fillStyle=col;
-  for(var y=-7;y<=7;y++)for(var x=-7;x<=7;x++){
-    var d=Math.sqrt(x*x+y*y),on=false;
+  for(var y=-R;y<=R;y++)for(var x=-R;x<=R;x++){
+    var d=Math.sqrt(x*x+y*y)/k,on=false;
     if(d<=4.7&&d>=2.1)on=true;
-    if(d<7.0&&d>3.6&&(Math.abs(x)<=1||Math.abs(y)<=1||Math.abs(Math.abs(x)-Math.abs(y))<=1))on=true;
-    if(on)ctx.fillRect(cx+x,cy+y,1,1);
+    if(d<7.0&&d>3.6&&(Math.abs(x)<=arm||Math.abs(y)<=arm||
+                      Math.abs(Math.abs(x)-Math.abs(y))<=arm))on=true;
+    if(on)ctx.fillRect(Math.round(cx)+x,Math.round(cy)+y,1,1);
   }
 }
 function drawShield(){
@@ -3992,6 +4025,13 @@ function drawShield(){
   }
 }
 var HUD_H=29;
+/* The XP strip is the floor of the bar, not part of its purple. Centring the
+   hearts and the gear on HUD_H counted the strip as bar and pushed them both
+   down, so there was visibly less purple under them than over. The strip is
+   drawn from 27 for the track and from 26 when a level lands and the rainbow
+   takes over, so 26 is where the purple actually stops - and that is what
+   they are centred in. */
+var HUD_PURPLE_H=26;
 /* Lay blocks down a column with the SAME gap everywhere - above the first,
    between each pair, and below the last. Surplus height is shared out
    instead of collecting in one place, which is what left the level-up screen
@@ -4046,15 +4086,17 @@ function drawHud(){
   var scoreEnd=2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
   wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-txtW(wTxt)));
   txt(wTxt,wX,4,ins?C_INS:'#ffe066');
-  /* second row: level, then the XP bar numbers, then the multiplier */
+  /* second row: level, then the XP bar numbers. The XP multiplier used to sit
+     at the right-hand end of this row, under the gear, and it crowded the
+     hearts and the gear for room they now need. It is on the stats grid in
+     settings and on the level-up screen, which is where a number you check
+     between waves belongs. */
   var lvTxt='LV'+level;
   txt(lvTxt,2,17,'#8fe9ff');
-  var xl=(upXp>1)?('x'+upXp.toFixed(2)):'';
   var xpTxt='XP '+xp+'/'+xpNeed;
-  var xpRoom=(xl?W-4-txtW(xl):W-2)-(2+txtW(lvTxt)+7);
+  var xpRoom=(GEAR.x-4)-(2+txtW(lvTxt)+7);
   if(txtW(xpTxt)>xpRoom)xpTxt='XP '+xpNeed;        /* tight: show the target */
   if(txtW(xpTxt)<=xpRoom)txt(xpTxt,2+txtW(lvTxt)+7,17,C_XP);
-  if(xl)txt(xl,W-2-txtW(xl),17,C_XP);
   ctx.fillStyle='#13325e';ctx.fillRect(0,27,W,2);
   /* A level just landed, or the card screen is up: celebrate either way. The
      rainbow used to be the auto-level consolation prize for having no card
@@ -4069,9 +4111,10 @@ function drawHud(){
      own midline rather than near its top, and the step between them is the
      heart's real width so the spacing follows the scale. */
   for(var i=0;i<hearts();i++)
-    drawHeartSeg(HEART_X-i*(HEART_W+2),Math.round((HUD_H-HEART_HT)/2),
+    drawHeartSeg(HEART_X-i*(HEART_W+2),Math.round((HUD_PURPLE_H-HEART_HT)/2),
                  Math.min(SEG,hp-i*SEG));
-  drawGear(state===SETTINGS?'#ffe066':(state===LEVELUP?'#2e3f58':'#6f8bb0'));
+  drawGear(state===SETTINGS?'#ffe066':(state===LEVELUP?'#2e3f58':'#6f8bb0'),
+           undefined,undefined,GEAR_K);
 
 }
 /* each stat keeps its own colour so the build reads at a glance */
@@ -4110,7 +4153,7 @@ function statCell(label,val,col,cx,y){
    both call this, so the format, colours and spacing are identical by
    construction rather than by two lists that have to be kept in step. */
 function drawStatGrid(y){
-  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' B/s',C_FIRE,49,y);
+  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' B/S',C_FIRE,49,y);
   statCell('DMG',      upDmg.toFixed(2)+'x',         C_DMG,  128,y);
   statCell('LUCK',     upLuck+'%',                   C_LUCK, 207,y);
   statCell('CRIT',     upCrit+'%',                   C_CRIT,  49,y+24);
@@ -4268,6 +4311,8 @@ var IC_UP   =['....#....','...###...','..#####..','.#######.','...###...','...##
 var IC_STICK=['...###...','...###...','....#....','....#....','.#######.','#########','#########'];
 var IC_ROCK =['..####...','.######..','########.','#########','.#######.','..#####..','...###...'];
 var IC_HOME =['....#....','...###...','..#####..','.#######.','#########','..#####..','..##.##..'];
+var IC_HELP =['..#####..','.##...##.','##.....##','......##.','....###..',
+              '....##...','.........','....##...','....##...'];
 var IC_EYE  =['..#####..','.#.....#.','#..###..#','#.#...#.#','#..###..#','.#.....#.','..#####..'];
 var IC_HIT  =['....#....','..#.#.#..','...###...','.#######.','...###...','..#.#.#..','....#....'];
 var ROWSTYLE={
@@ -4278,7 +4323,7 @@ var ROWSTYLE={
   'MAIN MENU':    {c:'#19d0c8',t:'#9ff4ee',i:IC_HOME},
   'PLAYER NAME':  {c:'#4fa3ff',t:'#bfe3ff',i:IC_EYE},
   'PROFILE':      {c:'#19d0c8',t:'#9ff4ee',i:IC_EYE},
-  'HOW TO PLAY':  {c:'#ffe066',t:'#fff3c4',i:IC_EYE},
+  'HOW TO PLAY':  {c:'#5cff5c',t:'#c8ffc8',i:IC_HELP},
   'BACK':         {c:'#4fc01f',t:'#b9ffa8',i:IC_BACK},
   'RESUME':       {c:'#4fc01f',t:'#b6ffb0',i:IC_PLAY},
   'SOUND':        {c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
@@ -4378,8 +4423,8 @@ function drawSettings(){
     txt('CHANGES HOW THE GAME PLAYS',W/2,64,'#3f6490',true);
     var gr=gpRows();
     for(i=0;i<gr.length;i++)drawRow(gpRect(i),gr[i][0],gr[i][1]);
-    var gb=gpRect(gr.length-1);
-    txt('AUTO LEVEL PICKS THE BEST CARD',W/2,gb.y+gb.h+14,'#2e3f58',true);
+    var ca=gpCapAfter(),gb=gpRect(ca>=0?ca:gr.length-1);
+    txt('AUTO LEVEL PICKS THE BEST CARD',W/2,gb.y+gb.h+5,'#2e3f58',true);
     r=backRect();panel(r,'#3f6490');
     drawIcon(IC_BACK,r.x+12,r.y+Math.round((r.h-9)/2),'#3f6490');
     txt('BACK',W/2+8,r.y+10,'#9fd8ff',true);
@@ -4451,7 +4496,7 @@ function render(){
   ctx.fillStyle='#05040c';ctx.fillRect(-8,-8,W+16,H+16);
   for(var s=0;s<stars.length;s++){ctx.fillStyle=stars[s].c;ctx.fillRect(Math.round(stars[s].x),Math.round(stars[s].y),1,1);}
 
-  if(state===PLAY||state===OVER||state===WIN||state===LEVELUP||state===SETTINGS){
+  if(runBehind()){
     for(var b=0;b<bullets.length;b++){
       /* x is the bullet's CENTRE. Drawing a 2px bullet from x put its middle
          a pixel right of the nose, which is visible on a 256-wide canvas. */
@@ -4485,9 +4530,14 @@ function render(){
       ctx.fillStyle='rgba(255,70,70,'+(0.30*alarmT/0.6).toFixed(3)+')';
       ctx.fillRect(0,0,W,H);
     }
-    if(state===LEVELUP)drawLevelUp();
-    if(state===SETTINGS)drawSettings();
   }
+
+  /* These two are screens, not playfield, so they are drawn whether or not a
+     run is behind them - exactly like INFO, PICK and BOARD below. They used to
+     sit INSIDE the block above, which meant the test for "is there a run
+     behind this" also decided whether the screen itself got drawn. */
+  if(state===LEVELUP)drawLevelUp();
+  if(state===SETTINGS)drawSettings();
 
   if(state===INFO)drawInfo();
   if(state===PICK)drawPick();
@@ -4522,7 +4572,7 @@ function render(){
       ctx.fillStyle=ch;ctx.fillRect(mr.x,mr.y,4,mr.h);
       var icy=mr.y+Math.round(mr.h/2);
       if(mlab==='NEW RUN')drawIcon(IC_PLAY,mr.x+14,icy-4,co);
-      else if(mlab==='DEMO MODE')drawIcon(IC_EYE,mr.x+14,icy-3,co);
+      else if(mlab==='HOW TO PLAY')drawIcon(IC_HELP,mr.x+14,icy-4,co);
       else if(mlab==='SPACESHIP')
         ctx.drawImage(SHIP_THEMES[shipTheme].icon,mr.x+11,icy-8);
       else drawGear(co,mr.x+19,icy);
@@ -4537,7 +4587,7 @@ function render(){
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
-    var build=(FIRE_RATE*upFire).toFixed(1)+' B/s  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
+    var build=(FIRE_RATE*upFire).toFixed(1)+' B/S  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
               '   CRIT '+upCrit+'% x'+upCritD.toFixed(2);
     if(state===OVER)overlay(overReason||'RUN OVER',[
       'SCORE '+score+'   BEST '+best,
