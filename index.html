@@ -1024,7 +1024,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.38';
+var VERSION='V2.39';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1206,18 +1206,48 @@ var P_SHIELD=0.25;
    buys room, because it spends the boost where it is wanted and is gone by
    the middle - at fade 3 this target sat 6% under the ceiling, at fade 4 it
    sits 19% under. That is why the fade is 4 and not 3. */
-var LUCK_FULL=1000,LUCK_SPREAD=2,RARE_EARLY=1.15,RARE_FADE=4;
-function rarityWeights(){
-  var n=RARITY.length,u=Math.max(0,Math.min(1,upLuck/LUCK_FULL)),w=[],i;
-  var sig=LUCK_SPREAD*Math.sqrt(Math.sin(Math.PI*u));
+/* The odds of each rarity being offered, from no luck to the cap.
+   Two parts, doing two different jobs.
+   The WINDOW is what makes the tiers arrive in ORDER - rare, then ultra, then
+   gold. A single growth rate per tier cannot do that: for blues to surge
+   early they would have to climb faster than gold, and then gold could never
+   overtake them. LUCK_WARP runs the window on u^WARP so the whole sequence
+   happens earlier, in the 0-200% band where the game is actually played,
+   while 1000% luck still lands on pure gold exactly.
+   The SEED is the starting mix, so wave 1 is not a wall of grey. It is held
+   flat below SEED_FROM and blended out by SEED_TO. Held flat because down
+   there the window is MORE common-heavy than the seed, so blending straight
+   from zero made the gold chance FALL as luck rose - 0.100% down to 0.094% -
+   which is the wrong direction for the one stat whose job is to raise it.
+   Both ends are exact rather than approached: zero luck is the seed itself,
+   and the cap short-circuits to gold. */
+var LUCK_FULL=1000,LUCK_SPREAD=2.2,LUCK_WARP=0.70,
+    LUCK_SEED_FROM=0.02,LUCK_SEED_TO=0.06,RARE_EARLY=1.15,RARE_FADE=4;
+/* one entry per RARITY, in the same order */
+var LUCK_SEED=[0.95,0.04,0.009,0.001];
+function luckWindow(v){
+  var n=RARITY.length,w=[],i,t=0;
+  var sig=LUCK_SPREAD*Math.sqrt(Math.sin(Math.PI*v));
   if(!(sig>0.004)){                     /* collapsed onto one end of the ladder */
     for(i=0;i<n;i++)w.push(0);
-    w[u<0.5?0:n-1]=1;
+    w[v<0.5?0:n-1]=1;
     return w;
   }
-  var centre=(n-1)*u;
+  var centre=(n-1)*v;
   for(i=0;i<n;i++)w.push(Math.pow(10,-Math.abs(i-centre)/sig));
-  w[1]*=1+RARE_EARLY*Math.pow(1-u,RARE_FADE);   /* rare's head start */
+  w[1]*=1+RARE_EARLY*Math.pow(1-v,RARE_FADE);   /* rare's head start */
+  for(i=0;i<n;i++)t+=w[i];
+  for(i=0;i<n;i++)w[i]/=t;               /* normalised, so the blend is fair */
+  return w;
+}
+function rarityWeights(){
+  var n=RARITY.length,u=Math.max(0,Math.min(1,upLuck/LUCK_FULL)),w=[],i;
+  if(u>=1){for(i=0;i<n;i++)w.push(0);w[n-1]=1;return w;}
+  var m=(u-LUCK_SEED_FROM)/(LUCK_SEED_TO-LUCK_SEED_FROM);
+  m=Math.max(0,Math.min(1,m));
+  if(m<=0)return LUCK_SEED.slice(0,n);
+  var mv=luckWindow(Math.pow(u,LUCK_WARP));
+  for(i=0;i<n;i++)w.push((1-m)*LUCK_SEED[i]+m*mv[i]);
   return w;
 }
 function rollRarity(){
@@ -2181,16 +2211,16 @@ function drawDmgNums(){
 var HALO_TOP=3;                  /* how many of the stack get the glow */
 function txtHalo(s,x,y,col,glow,t){
   var a0=ctx.globalAlpha,pulse=0.72+0.28*Math.sin(t*4.2),i;
-  /* Eight positions tight against the glyphs, then four cardinals one step
-     further out for the bloom. Twelve draws - a full 5x5 ring would be
-     twenty-four, and with ten of these stacked that doubling is the
-     difference between cheap and not on a phone. */
-  var NEAR=[[-1,-1],[0,-1],[1,-1],[-1,0],[1,0],[-1,1],[0,1],[1,1]],
-      FAR=[[0,-2],[0,2],[-2,0],[2,0]];
-  ctx.globalAlpha=a0*0.55*pulse;
-  for(i=0;i<NEAR.length;i++)txt(s,x+NEAR[i][0],y+NEAR[i][1],glow);
-  ctx.globalAlpha=a0*0.22*pulse;
-  for(i=0;i<FAR.length;i++)txt(s,x+FAR[i][0],y+FAR[i][1],glow);
+  /* Four cardinals only, one pixel out. It used to be those plus the four
+     diagonals plus a second ring - twelve draws - and at one pixel on a 5x7
+     font the diagonals land inside the counters of A, O, R and the digits
+     and fill them in, so the brighter the rarity the harder its own text was
+     to read. A cardinal outline traces the glyph instead of flooding it, and
+     at four draws instead of twelve it is a third of the cost with ten of
+     these stacked on a phone. */
+  var RING=[[0,-1],[-1,0],[1,0],[0,1]];
+  ctx.globalAlpha=a0*0.45*pulse;
+  for(i=0;i<RING.length;i++)txt(s,x+RING[i][0],y+RING[i][1],glow);
   ctx.globalAlpha=a0;
   txt(s,x,y,col);
 }
@@ -3124,7 +3154,7 @@ function cardRect(i){
 /* one line per card saying exactly what the pick does */
 function cardDetail(c){
   var u=c.u,v=u.vals?u.vals[c.r]:0;
-  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  BPS';
+  if(u.id==='fire')return (FIRE_RATE*upFire).toFixed(1)+' \u2192 '+(FIRE_RATE*(upFire+v/100)).toFixed(1)+'  B/s';
   if(u.id==='dmg') return upDmg.toFixed(2)+'x \u2192 '+(upDmg+v/100).toFixed(2)+'x  DAMAGE';
   if(u.id==='luck')return upLuck+'% \u2192 '+(upLuck+v)+'%  LUCK';
   if(u.id==='crit')return upCrit+'% \u2192 '+(upCrit+v)+'%  CRIT';
@@ -3702,7 +3732,12 @@ function update(dt){
 /* A real bitmap font: every pixel is placed on purpose, so it stays razor
    sharp at any zoom instead of going soft the way a rasterised 8px face does.
    Glyphs are cached per colour and blitted. */
-var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......'};
+var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......',
+/* the one lowercase letter in the font, for the B/s label. Everything else
+   is drawn in caps, so txt resolves a character to its own glyph when it
+   has one and falls back to the uppercase otherwise - which leaves every
+   other lowercase letter behaving exactly as it did. */
+'s':'...........#####.....###.....#####.'};
 var FW=5,FH=7,FADV=6,GCACHE={};
 function glyph(ch,col){
   var key=col+ch;
@@ -3715,21 +3750,25 @@ function glyph(ch,col){
   c.ch=ch;
   GCACHE[key]=c;return c;
 }
+/* A character keeps its own glyph if the font has one, and is drawn as its
+   uppercase if not. 's' is the only lowercase glyph there is, so this changes
+   nothing for any other text in the game. */
+function glyphKey(ch){return GLYPH.hasOwnProperty(ch)?ch:ch.toUpperCase();}
 function txt(str,x,y,col,center){
-  str=String(str).toUpperCase();
+  str=String(str);
   var sx=Math.round(center?x-(str.length*FADV-1)/2:x),yy=Math.round(y);
   for(var i=0;i<str.length;i++){
-    var g=glyph(str.charAt(i),col);
+    var g=glyph(glyphKey(str.charAt(i)),col);
     if(g)ctx.drawImage(g,sx+i*FADV,yy);
   }
 }
 function txtW(str){return String(str).length*FADV-1;}
 /* the same 5x7 glyphs blown up by a whole number, so they stay crisp */
 function txtBig(str,x,y,col,k){
-  str=String(str).toUpperCase();
+  str=String(str);
   var adv=FADV*k,sx=Math.round(x-(str.length*adv-k)/2),yy=Math.round(y),i,g;
   for(i=0;i<str.length;i++){
-    g=glyph(str.charAt(i),col);
+    g=glyph(glyphKey(str.charAt(i)),col);
     if(g)ctx.drawImage(g,0,0,FW,FH,sx+i*adv,yy,FW*k,FH*k);
   }
 }
@@ -4071,7 +4110,7 @@ function statCell(label,val,col,cx,y){
    both call this, so the format, colours and spacing are identical by
    construction rather than by two lists that have to be kept in step. */
 function drawStatGrid(y){
-  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' BPS',C_FIRE,49,y);
+  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' B/s',C_FIRE,49,y);
   statCell('DMG',      upDmg.toFixed(2)+'x',         C_DMG,  128,y);
   statCell('LUCK',     upLuck+'%',                   C_LUCK, 207,y);
   statCell('CRIT',     upCrit+'%',                   C_CRIT,  49,y+24);
@@ -4285,7 +4324,7 @@ function infoRows(){return [
   ['CRIT DAMAGE',C_CRITD,['WHAT A CRIT MULTIPLIES BY. 1.1X FIRST.',
                           'NOT OFFERED UNTIL YOU CAN CRIT AT ALL.']],
   ['LUCK',       C_LUCK, ['SHIFTS WHICH CARDS YOU ARE OFFERED.',
-                          '0% IS ALL COMMON. 1000% IS ALL GOLD.']],
+                          '0% IS MOSTLY COMMON. 1000% IS ALL GOLD.']],
   ['XP GAIN',    C_XP,   ['MULTIPLIES XP, SO MORE LEVELS AND MORE',
                           'CARDS. YOUR SCORE IS NOT AFFECTED.']],
   ['HULL',       '#ff4d6d',['THREE HEARTS, FOUR SEGMENTS EACH.',
@@ -4498,7 +4537,7 @@ function render(){
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
-    var build=(FIRE_RATE*upFire).toFixed(1)+' BPS  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
+    var build=(FIRE_RATE*upFire).toFixed(1)+' B/s  '+upDmg.toFixed(2)+'x  LUCK '+upLuck+'%'+
               '   CRIT '+upCrit+'% x'+upCritD.toFixed(2);
     if(state===OVER)overlay(overReason||'RUN OVER',[
       'SCORE '+score+'   BEST '+best,
