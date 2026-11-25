@@ -25,8 +25,17 @@ html,body{height:100%;height:100dvh;background:#05040c;overflow:hidden;overscrol
 #nameIn{position:fixed;display:none;z-index:5;background:transparent;border:0;outline:0;
   color:transparent;caret-color:transparent;font-size:16px;padding:0;margin:0;
   -webkit-tap-highlight-color:transparent}
+/* visibility:hidden until the first frame has been drawn - frame() turns it
+   on. An element with no width or height attributes is 300x150 by default,
+   and the browser lays that out and paints it the moment it parses this tag,
+   which is BEFORE it has parsed the game below and run fit(). So a landscape
+   block with this glow round it appeared in the middle of the screen for a
+   moment on a cold load. Hidden, that moment is just the page background.
+   visibility rather than display: a hidden element still has a box, so fit()
+   can still measure, which display:none would have broken. */
 canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
-  box-shadow:0 0 40px rgba(50,120,255,.18);touch-action:none;display:block}
+  box-shadow:0 0 40px rgba(50,120,255,.18);touch-action:none;display:block;
+  visibility:hidden}
 </style>
 </head>
 <body>
@@ -1067,7 +1076,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.54';
+var VERSION='V2.68';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1718,6 +1727,11 @@ function gpRows(){
          ['AUTO LEVEL',autoLevel?'ON':'OFF']];
   if(hasMouse())r.push(['MOUSE STEER',mouseSteer?'ON':'OFF']);
   r.push(['HOW TO PLAY','']);
+  /* Last, below HOW TO PLAY, because HOW TO PLAY was put directly under AUTO
+     LEVEL on purpose and nothing should come between them. And only from the
+     menu: this starts a fresh run, so offering it mid-run would be a button
+     that silently throws away the run behind it. */
+  if(fromMenu())r.push(['AI RUN','']);
   return r;
 }
 /* The AUTO LEVEL caption used to hang under whatever row happened to be last.
@@ -1770,6 +1784,14 @@ function gpActivate(i){
   else if(lab==='MOUSE STEER'){mouseSteer=!mouseSteer;sfx.pick();
     if(!mouseSteer)ptr.active=false;        /* let go of the ship right away */
     try{localStorage.setItem('vr_msteer',mouseSteer?'1':'0');}catch(e){}}
+  else if(lab==='AI RUN'){
+    /* Straight to the wave picker, which then starts a real run - same
+       waves, same cards, same everything - with the bot at the controls.
+       jumpToWave sets testRun, which is what keeps it off the leaderboard:
+       the board is for people. */
+    sfx.pick();closeSettings();
+    pickBot=true;pickBuf='';state=PICK;
+  }
   else if(lab==='HOW TO PLAY'){sfx.pick();infoBack=SETTINGS;state=INFO;}
 }
 /* Dispatched on the row's label, not its position. The list differs between
@@ -1823,8 +1845,9 @@ function openLevelUp(){
     picked.push({u:list[i],r:(list[i].kind==='once')?list[i].fixed:rollRarity()});
   choices=picked;state=LEVELUP;lvlFlash=0.75;
   /* Auto levelling reads the card for you and must not be held up by the lock,
-     so it picks before the lock is armed. */
-  if(autoLevel){applyChoice(autoPick(),true);return;}
+     so it picks before the lock is armed. The bot levels the same way - see
+     the note above autoPick's use by the bot. */
+  if(autoPlay||autoLevel){applyChoice(autoPick(),true);return;}
   sfx.level();
   lvlLock=LVL_LOCK;luAnim=0;luT=0;
 }
@@ -1886,6 +1909,10 @@ function applyChoice(i,force){
    START_LIVES with nothing banked. */
 /* A run started from the wave picker is a test, so it never touches BEST. */
 var testRun=false,startedAt=1,pickBuf='';
+/* Set when the wave picker was opened from AI RUN rather than from the
+   vaulted demo entry. jumpToWave consumes it, so the picker itself does not
+   need to know which of its two ways in was used. */
+var pickBot=false;
 /* One level-up, resolved the way AUTO LEVEL resolves it: deal the same three
    cards the real screen would, take the rarest, and choose at random between
    any that tie. */
@@ -1932,6 +1959,8 @@ function jumpToWave(n){
   startWave(n-1);
   hp=START_HP;shield=false;                  /* no freebies for skipping ahead */
   testRun=true;startedAt=n;  /* reset() cleared it, set it back */
+  autoPlay=pickBot;pickBot=false;   /* reset() cleared this too; consume it */
+  if(autoPlay){banner='BOT PILOTING';bannerT=2.2;}
   state=PLAY;MUS.start();
 }
 function buildQueue(w){
@@ -1960,6 +1989,13 @@ function startWave(n){
 }
 function reset(){
   ship={x:W/2};
+  /* The bot drives by setting ptr.active every frame and never clears it, so
+     a run started straight after one - by keyboard, with no tap release and
+     no arrow key to break the latch - opened with the ship snapped to
+     wherever the bot left it and frozen there. Any pointer release or arrow
+     key already cleared it, which is why it almost never showed; a new run
+     should not depend on that. */
+  ptr.active=false;ptrHeld=false;
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];
   score=0;hp=START_HP;leaked=0;kills=0;shots=0;hits=0;dodged=0;broken=0;gameT=0;
   alarmT=0;dnums=[];ups=[];heals=[];overReason='';lvlFlash=0;
@@ -1970,6 +2006,7 @@ function reset(){
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
   upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];ups=[];
   startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;confirmAct='';
+  autoPlay=false;    /* set again straight after, by the one caller that wants it */
 }
 
 /* ================= spawning ================= */
@@ -2002,13 +2039,55 @@ var BRUTE_VGAP=2;
    does. When the cap is reached the queue simply serves something else first,
    so the wave keeps flowing and the brutes arrive spread out instead of
    together. */
+/* How fast a knitter mends what is around it. The fraction COMPOUNDS with the
+   wave at the same rate health does, counted from the wave knitters arrive,
+   because a flat fraction quietly stops mattering: health and the player's
+   damage both compound, and measured against a median build 5.5% a second was
+   worth 0.8% of the gun at wave 71 and 0.1% of it by 151. A knitter was
+   supposed to be the thing you kill first and had become decoration.
+   HEAL_CAP is where it stops. At 400% a second a mended alien is back to full
+   four times over between shots, which is as threatening as the mechanic can
+   be - and a median build still out-paces it, by a factor of twelve at wave
+   151, so it is never a wall. The curve reaches the cap around wave 180. */
+var HEAL_CAP=4.0;
+/* Bumped once a frame. An alien carries the stamp of the frame it was last
+   mended on, which is how a second knitter knows to leave it alone. */
+var healStamp=0;
+function healRate(t){
+  /* clamped at zero, so the rate below the arrival wave is the flat base
+     rather than the curve run backwards - academic, since no knitter is
+     dealt before wave 71, but it is what the code does */
+  var since=Math.max(0,(wi+1)-(ROSTER_FROM[t.key]||1));
+  return Math.min(HEAL_CAP,t.heal*Math.pow(HP_GROW,since));
+}
+/* Which wave each kind first appears on, by key, so a cap can be measured
+   against the kind's own age rather than the clock. */
+var ROSTER_FROM={};
+(function(){for(var i=0;i<ROSTER.length;i++)ROSTER_FROM[ROSTER[i].k]=ROSTER[i].from;})();
+/* How many of a kind may be alive at once.
+   It eases in one more every TWO waves, holds at its own limit once it gets
+   there, and gains one more per decade from arrival. For every kind with a
+   limit of four or less that means the limit is reached inside the first
+   decade; the brute, at six, is still ramping when its first decade ends.
+   SINCE THE KIND ARRIVED - that is the whole correction. The old rule read
+   1+floor(wi/4) off the absolute wave number, which was meant to be a gentle
+   introduction and only ever worked for the brute, the first kind to unlock.
+   By wave 31 that term already allowed eight, so the splitter arrived at its
+   full four on the very first wave it existed, and every kind after it did
+   the same. Wave 31 went from no splitters to four on screen at once, wave 32
+   dealt six of them, and each one leaves two mites behind: a third of the
+   wave's work appearing over two waves, which is where runs were stalling.
+   The per-type limit is still a shape rule rather than a difficulty setting,
+   so it keeps loosening - held flat it became the main brake, because deep
+   rosters are mostly heavies and the spawner would idle against a near-empty
+   screen. It just loosens on the kind's own clock now. */
 function maxOnScreen(t){
   if(!t||t.maxOn===undefined)return 1e9;
-  /* The per-type limit is a shape rule for an ordinary wave, not a difficulty
-     setting, so it loosens as the run goes on. Held flat it became the main
-     brake: deep rosters are mostly heavies, so most of the queue sat blocked
-     and the spawner idled with a near-empty screen. */
-  return Math.min(t.maxOn+Math.floor(wi/40),1+Math.floor(wi/4));
+  var since=(wi+1)-(ROSTER_FROM[t.key]||1);
+  if(since<0)return 0;
+  /* Two waves per step on the way in, not one, so a kind takes six waves to
+     reach its own limit rather than three. */
+  return Math.min(1+Math.floor(since/2),t.maxOn+Math.floor(since/10));
 }
 /* Each heavy kind had its own limit, but nothing stopped four carapaces,
    four phantoms and two colossi sharing a screen. This is the ceiling on all
@@ -2163,16 +2242,29 @@ var dnums=[];
    healing is invisible - health bars creep back up and you cannot see which
    alien is being kept alive, or that anything is doing it. */
 var heals=[];
-function healPop(x,y){
-  if(heals.length>60)return;
-  heals.push({x:x+(Math.random()*12-6),y:y,vy:-20-Math.random()*12,life:0.8});
+var HEAL_RING=10,          /* pluses thrown off at once, around the alien */
+    HEAL_MAX_PARTS=140;
+/* A RING around whatever is being mended rather than one plus drifting off
+   the top of it. Ten at a time, spread evenly, each drifting outward and up
+   as it fades - so which alien is being kept alive, and the fact that
+   anything is doing it, is unmistakable from across the screen. */
+function healPop(x,y,rx,ry){
+  if(heals.length>HEAL_MAX_PARTS-HEAL_RING)return;
+  var i,a0=Math.random()*6.2832;
+  for(i=0;i<HEAL_RING;i++){
+    var an=a0+i*6.2832/HEAL_RING,
+        rr=0.55+Math.random()*0.45,
+        cx=Math.cos(an),cy=Math.sin(an);
+    heals.push({x:x+cx*rx*rr,y:y+cy*ry*rr,
+                vx:cx*16,vy:cy*11-20,life:0.70});
+  }
 }
 function drawHeals(){
   for(var i=0;i<heals.length;i++){
     var h=heals[i],x=Math.round(h.x),y=Math.round(h.y);
-    ctx.globalAlpha=Math.max(0,Math.min(1,h.life/0.4));
+    ctx.globalAlpha=Math.max(0,Math.min(1,h.life/0.35));
     ctx.fillStyle='#6bff8f';
-    ctx.fillRect(x+2,y,1,5);ctx.fillRect(x,y+2,5,1);
+    ctx.fillRect(x+1,y,1,3);ctx.fillRect(x,y+1,3,1);   /* a 3x3 plus */
   }
   ctx.globalAlpha=1;
 }
@@ -2831,6 +2923,9 @@ function drawBoardBlock(){
    buttons look identical - the same trap the old DEMO MODE amber was picked
    to avoid against the ORANGE hull. SPACESHIP's value below is only a
    fallback - the draw always overrides it with the hull. */
+/* Four. A fifth full-width button does not fit a 256x384 canvas - the stack
+   bottoms out at its tappable floor and still runs 29px into the footer - so
+   AI RUN lives on the gameplay page instead, below HOW TO PLAY. */
 var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#c86bff'],
                 ['HOW TO PLAY','#5cff5c'],['SETTINGS','#ff6b6b']];
 /* The hull button is the one row whose frame and whose contents are coloured
@@ -2870,6 +2965,7 @@ function enterInsanity(){
 }
 function toMenu(){
   state=MENU;setPage=0;pickBuf='';running=false;confirmAct='';MUS.stop();
+  autoPlay=false;pickBot=false;
   lbLoad(BOARD_ERA);                /* the menu is always the live board */
   aliens=[];bullets=[];rocks=[];parts=[];shocks=[];dnums=[];ups=[];
   bannerT=0;alarmT=0;shake=0;
@@ -3123,8 +3219,11 @@ function pickAt(mx,my){
   return 0;
 }
 function drawPick(){
-  txtBig('DEMO MODE',W/2,18,'#4fa3ff',2);
-  txt('TAP ANY WAVE TO START THERE',W/2,40,'#3f6490',true);
+  /* One screen, two ways in: AI RUN from the gameplay page, and the vaulted
+     demo entry. It says which one you came through. */
+  txtBig(pickBot?'AI RUN':'DEMO MODE',W/2,18,pickBot?'#7cf0c0':'#4fa3ff',2);
+  txt(pickBot?'TAP ANY WAVE AND THE BOT FLIES IT':'TAP ANY WAVE TO START THERE',
+      W/2,40,'#3f6490',true);
   txt('UPGRADES ARE GRANTED TO MATCH',W/2,52,'#5f6a7a',true);
   var n,r,boss,col;
   for(n=1;n<=MAXWAVE;n++){
@@ -3188,7 +3287,9 @@ window.addEventListener('keydown',function(e){
   if(state===MENU&&askName)return;                /* the field owns the keys */
   if(state===INFO){ac();sfx.pick();state=infoBack;return;}
   if(state===MENU){
-    if(k>='1'&&k<='4'){ac();menuPick(+k-1);return;}
+    /* bounded by the list, not by a literal - adding a button used to need
+       this number changed too, and of course it did not get changed */
+    if(k>='1'&&k<='9'&&+k<=MENU_ITEMS.length){ac();menuPick(+k-1);return;}
     if(k==='l'){ac();sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
     if(k===' '||k==='enter'){ac();menuPick(0);return;}
     return;
@@ -3368,6 +3469,9 @@ function down(e){
     return;
   }
   if(state===PLAY&&inRect(GEAR,mx,my)){openSettings();return;}
+  /* While the bot is flying, the playfield is for watching. The gear above
+     still works, and MAIN MENU in there is how you stop it. */
+  if(state===PLAY&&autoPlay)return;
   if(state===WIN){enterInsanity();return;}
   if(state===OVER){toMenu();return;}
   if(state!==PLAY)return;
@@ -3569,7 +3673,231 @@ function hullLoss(dmg,cause,alienHit,contact){
     invT=Math.max(invT,CHIP_INVULN);
   }
 }
+/* ================= the bot =================
+   AUTOPLAY. What it is actually solving is not what it looks like.
+   A leak and a collision cost the SAME hull - leakHit and the contact check
+   both spend hullDmg of the type - so dodging an alien saves nothing at all.
+   It lands at the bottom a moment later for exactly the same price. The only
+   move that saves hull is KILLING the thing. So this is a targeting problem
+   with two exceptions, not a dodging problem:
+     - a HEAVY touch (>=SETBACK_AT) also costs a 1.1s respawn with the
+       bullets wiped, which the same alien leaking does not, so heavies are
+       worth stepping around even though the hull cost is identical;
+     - a meteor is worth stepping around because dodging one is genuinely
+       free - it is the only thing on screen that costs nothing to let past.
+   The old test bot dodged everything and spent its aim doing it, which is
+   most of why it died around wave 13.
+   It flies the POINTER, which is the control a person actually uses - a
+   finger on glass, or mouse steering on a desktop. It was on the arrow keys
+   at first and that was a handicap no human plays with: it capped the bot
+   around wave 20, and moving it to the pointer took it to 30 on its own. */
+var autoPlay=false, botT=null;
+/* Damage a shot is worth on average. Crit chance above 100 is wasted, which
+   is the player's problem too, but the bot must not plan around points it
+   does not have. */
+function botShot(){return bulletDmg()*(1+Math.min(100,upCrit)/100*(upCritD-1));}
+/* How fast it is really coming down. A bulwark spends most of its life going
+   sideways and barely descends, so its own speed badly overstates it. */
+function botVy(a){
+  if(a.t.stair)return Math.max(6,a.spd*(a.drop>0?3.2:0.22));
+  return Math.max(6,a.spd);
+}
+/* and sideways, which is what a shot has to be led against */
+function botVx(a){
+  if(a.t.drift)return a.dir*a.t.drift*VS;
+  if(a.t.stair&&a.drop<=0)return a.dir*a.t.stair*VS;
+  return 0;
+}
+/* Where to stand.
+   The gun points up, so to kill anything the ship has to be under it. Two
+   earlier attempts got this wrong in opposite directions. Ranking by urgency
+   made it ignore a brute while it was high and cheap, then notice too late:
+   every run ended with a brute on its head. Scoring whole columns instead
+   made it so reluctant to move that things simply fell past it.
+   What works is the ratio: hull saved per second SPENT, so a fat target
+   close by beats a cheap one across the screen and a brute gets picked up
+   while there is still time to kill it. Then it commits - switching target
+   mid-volley throws away every shot already invested - and only lets go when
+   the target dies, becomes unsavable, or something worth clearly more
+   appears.
+   Safety is separate and narrow: step out of the way of a heavy or a meteor,
+   nothing else. A light alien landing on the ship costs the same hull as
+   letting it reach the floor, so dodging one is pure loss. */
+var BOT_SPD=4000,          /* pointer control: effectively instant */
+    BOT_SLACK=6.0,         /* seconds of slack that halve a job's priority */
+    BOT_BOSS=2.2,          /* leave the boss until it is this close to the floor */
+    BOT_SWITCH=1.15,       /* how much better a new target must be */
+    BOT_LOOK=1.8;          /* a heavy this close is a hazard, not a target */
+/* Damage already on its way, credited to the alien each bullet will ACTUALLY
+   hit - the lowest one standing in its column - and to that one only.
+   The first version credited every bullet to every alien above it in the
+   same column, and that was a deadlock, not an overestimate. Under a cluster,
+   or under a boss with a wide hitbox, every alien looked as though the
+   bullets in the air had already killed it, so the bot chose no target at
+   all; with no target it stood still; standing still it kept firing into the
+   same column, which kept the estimate high. It froze for up to five seconds
+   and was simply run over. Forty per cent of frames had no target.
+   One pass per frame rather than one per alien, because this is now a
+   question about bullets and not about any one of them. */
+function botFlight(){
+  var i,j,b,a,d=[],n=aliens.length,bi,low,shot=botShot();
+  for(i=0;i<n;i++)d.push(0);
+  for(i=0;i<bullets.length;i++){
+    b=bullets[i];bi=-1;low=-1e9;
+    for(j=0;j<n;j++){
+      a=aliens[j];
+      if(a.t.phase&&!a.solid)continue;        /* it would pass straight through */
+      if(a.y+a.t.h>b.y)continue;              /* the bullet is past it already */
+      if(Math.abs(b.x-a.x)>a.t.w/2)continue;  /* not in this column */
+      if(a.y>low){low=a.y;bi=j;}              /* the lowest one is hit first */
+    }
+    if(bi>=0)d[bi]+=shot;
+  }
+  return d;
+}
+function botRate(a,fromX,inflight){
+  var gap=fireGap(),shot=botShot();
+  var fly=Math.max(0,SHIP_Y-a.y-a.t.h)/BULLET_SPD;
+  /* BOT_SPD, not SHIP_SPD: the bot moves by pointer, so getting there is
+     free and the only cost left is the bullet's flight. Priced at the key
+     speed it refused to cross the screen for targets it could in fact be
+     standing on next frame. */
+  var vx=botVx(a),px=a.x,k,tr=0;
+  for(k=0;k<2;k++){tr=Math.abs(px-fromX)/BOT_SPD;px=a.x+vx*(tr+fly);}
+  if(px<a.t.w/2)px=a.t.w/2;else if(px>W-a.t.w/2)px=W-a.t.w/2;
+  var left=a.hp+(a.sh||0)-(inflight||0);
+  if(left<=0)return {x:px,rate:-1,fits:false,dl:0,spend:0};  /* already dead */
+  var work=Math.ceil(left/Math.max(1,shot))*gap;
+  if(a.t.phase)work/=0.75;                        /* part of its life it cannot be hit */
+  if(a.t.regen||a.regen)work*=1.2;                /* it mends between volleys */
+  var pen=a.t.boss?200:hullDmg(a.t);
+  if(a.t.heal)pen*=2.2;                           /* a knitter mends the rest of the wave */
+  var dl=(H-a.y)/botVy(a);
+  var spend=tr+fly+work;
+  /* SLACK is what a boss wave exposed. Worth per second alone says a boss -
+     which costs the run outright if it lands - is the best thing on the board
+     from the moment it appears. A boss is slow, though: it has a minute of
+     slack, and something with a minute of slack is work to fit in around what
+     is due now, not the thing to drop everything for. */
+  var slack=Math.max(0,dl-spend);
+  return {x:px,rate:(pen/Math.max(0.05,spend))/(1+slack/BOT_SLACK),
+          fits:spend<=dl,dl:dl,spend:spend};
+}
+function botAim(){
+  var i,a,half=SHIP_W/2,best=null,bestR=null,bv=-1,cur=null,curR=null;
+  /* A boss is not a target while there is anything else alive. Slack alone
+     was meant to handle this and did not: a boss is worth so much more than
+     anything beside it that the discount only delayed the tunnel vision
+     rather than stopping it, and watching it play, it simply sat under the
+     boss while the wave walked past.
+     So the rule is the one a player uses: clear the room, then put everything
+     into the boss. A boss is slow enough that this is nearly always right -
+     and the guard below is for the times it is not, when the boss is close
+     enough that leaving it any longer loses the run outright. */
+  var others=0;
+  for(i=0;i<aliens.length;i++){
+    a=aliens[i];
+    if(a.t.boss||a.y+a.t.h<HUD_H)continue;
+    if(a.t.phase&&!a.solid)continue;
+    others++;
+  }
+  var fl=botFlight(),low=null,lowR=null,lowY=-1e9;
+  for(i=0;i<aliens.length;i++){
+    a=aliens[i];
+    if(a.y+a.t.h<HUD_H)continue;                  /* not on the field yet */
+    if(a.t.phase&&!a.solid)continue;              /* bullets pass through it */
+    var r=botRate(a,ship.x,fl[i]);
+    /* whatever happens below, SOMETHING is worth shooting: remember the one
+       nearest the floor as a last resort */
+    if(a.y>lowY){lowY=a.y;low=a;lowR=r;}
+    if(a.t.boss&&others&&r.dl>r.spend*BOT_BOSS)continue;   /* room first */
+    if(!r.fits)continue;
+    if(a===botT){cur=a;curR=r;}
+    if(r.rate>bv){bv=r.rate;best=a;bestR=r;}
+  }
+  /* stay on the current one unless the alternative is clearly better */
+  if(cur&&(!best||bv<curR.rate*BOT_SWITCH)){best=cur;bestR=curR;}
+  if(!best){
+    /* Nothing can be saved in time. Keep the gun on whatever is worth most
+       anyway - it may be savable a second later, and a wave that is going to
+       hurt hurts less with some of it gone. bv restarts here: carrying the
+       first loop's figure over meant a rate of -1, which is what a target
+       with enough damage already in the air reports, beat everything and the
+       bot chose nothing at all. */
+    bv=-1e9;
+    for(i=0;i<aliens.length;i++){
+      a=aliens[i];
+      if(a.y+a.t.h<HUD_H||(a.t.phase&&!a.solid))continue;
+      var r2=botRate(a,ship.x,fl[i]);
+      if(r2.rate>bv){bv=r2.rate;best=a;bestR=r2;}
+    }
+  }
+  /* and if even that found nothing - every alien phased out, say - take the
+     lowest one on the field rather than standing still. The bot must never
+     be without somewhere to point. */
+  if(!best&&low){best=low;bestR=lowR;}
+  botT=best;
+  var want=best?bestR.x:ship.x;
+  return Math.max(half+1,Math.min(W-half-1,botStep(want)));
+}
+/* The sidestep. Only a heavy touch or a meteor is worth leaving a good
+   column for: the first costs a 1.1s respawn with the bullets wiped on top
+   of the hull, the second is free to avoid. Everything else is let through. */
+function botStep(want){
+  var i,half=SHIP_W/2,haz=[],t;
+  for(i=0;i<aliens.length;i++){
+    var a=aliens[i];
+    if(!a.t.boss&&hullDmg(a.t)<SETBACK_AT)continue;
+    t=(SHIP_Y-a.y-a.t.h)/botVy(a);
+    if(t<-0.3||t>BOT_LOOK)continue;
+    haz.push({x:a.x+botVx(a)*Math.max(0,t),w:a.t.w/2+HITW+(a.t.boss?8:3),
+              t:Math.max(0.05,t),boss:!!a.t.boss});
+  }
+  for(i=0;i<rocks.length;i++){
+    var r=rocks[i];
+    if(r.vy<=5)continue;
+    t=(SHIP_Y-r.y)/r.vy;
+    if(t<-0.3||t>BOT_LOOK)continue;
+    haz.push({x:r.x+r.vx*Math.max(0,t),w:r.r+HITW+4,t:Math.max(0.05,t)});
+  }
+  if(!haz.length)return want;
+  var bx=want,bc=1e9;
+  for(var cx=half+1;cx<=W-half-1;cx+=2){
+    var c=Math.abs(cx-want)*0.06;
+    for(i=0;i<haz.length;i++){
+      var h=haz[i],ov=h.w-Math.abs(cx-h.x);
+      /* A boss touch is not a hit, it is the end of the run, so its lane is
+         not a cost to weigh against a good firing position - it is simply
+         not a position. Two runs in nine ended under a REAVER before this. */
+      if(ov>0)c+=h.boss?1e7:(ov/h.w)*(90/(0.30+h.t));
+    }
+    if(c<bc){bc=c;bx=cx;}
+  }
+  return bx;
+}
+/* -1, 0 or +1, as if a hand were on the arrow keys. The deadband is what
+   stops it juddering on the spot. */
+function botDir(){
+  var dx=botAim()-ship.x;
+  if(Math.abs(dx)<2)return 0;
+  return dx<0?-1:1;
+}
+/* The bot levels like AUTO LEVEL does: take the rarest card, break ties at
+   random. It used to weigh what each card DOES on top of that, with a table
+   of preferences, and that was measured against plain rarity over nine runs
+   each: rarity reached a median wave of 41 against 39, a mean of 52.8
+   against 38.9, and won the game outright twice while the weighted version
+   never got past 42.
+   The reason is that rarity compounds and a preference does not. A gold LUCK
+   card deals rarer cards for the rest of the run, which deals more gold of
+   everything; a table that rates DAMAGE above LUCK takes the common damage,
+   banks a small permanent gain and never opens that door. The preferences
+   also quietly starved luck, XP and crit damage altogether, which is what it
+   looked like from outside - and it was.
+   So there is no bot card table any more. One rule, and it is the rule the
+   player already has. */
 function update(dt){
+  healStamp++;          /* one per frame; see the knitter's heal loop */
   for(var s=0;s<stars.length;s++){
     stars[s].y+=stars[s].s*dt;
     if(stars[s].y>H){stars[s].y=-1;stars[s].x=Math.random()*W;}
@@ -3607,8 +3935,16 @@ function update(dt){
   /* ---- ship ---- */
   var shipPrevX=ship.x;
   var dir=0;
-  if(keys['arrowleft']||keys['a'])dir-=1;
-  if(keys['arrowright']||keys['d'])dir+=1;
+  /* The bot flies the POINTER, which is the control a person actually uses -
+     a finger on glass, or mouse steering on a desktop. Both put the ship
+     where you point with no top speed, so flying the arrow keys instead
+     would have been handing it a handicap no human plays with, and it
+     showed: every run ended about where a mediocre player's does. */
+  if(autoPlay){ptr.active=true;ptr.x=botAim();}
+  else{
+    if(keys['arrowleft']||keys['a'])dir-=1;
+    if(keys['arrowright']||keys['d'])dir+=1;
+  }
   var half=SHIP_W/2;
   /* Touch is absolute: the ship sits under the finger, no lag, no top speed.
      Keys move at a fixed clip; the guard still budgets the slower 240. */
@@ -3731,19 +4067,33 @@ function update(dt){
       }
     }
     if(al.t.heal){
-      /* mends everything around it, itself included only via its own regen */
-      var hr=al.t.healR*VS;
+      /* Mends everything around it, itself included only via its own regen.
+         ONE knitter per alien per frame. Knitters are in the insanity swarm,
+         so there are a lot of them - measured 17 alive at wave 151 with five
+         mending at once - and overlapping auras used to multiply: five at
+         132% a second is 660% on anything standing in all five. Capping how
+         many may be on screen is the wrong lever for a swarm kind, because
+         blocking fourteen spawns backs the spawner up and empties the
+         screen. Capping the STACK costs nothing: knitters stay numerous,
+         they just cover more ground instead of compounding on one target. */
+      var hr=al.t.healR*VS,hf=healRate(al.t);
       for(var hl=0;hl<aliens.length;hl++){
         var oh=aliens[hl];
         if(oh===al||oh.hp>=oh.max)continue;
+        if(oh.hstamp===healStamp)continue;      /* another knitter has it */
         var hdx=oh.x-al.x,hdy=(oh.y+oh.t.h/2)-(al.y+al.t.h/2);
         if(hdx*hdx+hdy*hdy>hr*hr)continue;
-        oh.hp=Math.min(oh.max,oh.hp+oh.max*al.t.heal*dt);
-        /* one plus every so often, not one a frame */
+        oh.hstamp=healStamp;
+        oh.hp=Math.min(oh.max,oh.hp+oh.max*hf*dt);
+        al.healT=0.25;                  /* its arms work while it is mending */
+        al.arm=(al.arm||0)+dt;
+        /* a ring every so often, not one a frame */
         oh.hpop=(oh.hpop||0)-dt;
-        if(oh.hpop<=0){oh.hpop=0.30;healPop(oh.x,oh.y+oh.t.h*0.3);}
+        if(oh.hpop<=0){oh.hpop=0.45;
+          healPop(oh.x,oh.y+oh.t.h*0.45,oh.t.w*0.62,oh.t.h*0.62);}
       }
     }
+    if(al.healT>0)al.healT-=dt;
     al.y+=vy*dt;
     if(al.fl>0)al.fl-=dt;
     if(al.y>H+4){
@@ -3781,7 +4131,7 @@ function update(dt){
   }
 
   for(var hv=heals.length-1;hv>=0;hv--){
-    var hh=heals[hv];hh.y+=hh.vy*dt;hh.vy*=0.93;
+    var hh=heals[hv];hh.x+=hh.vx*dt;hh.y+=hh.vy*dt;hh.vx*=0.94;hh.vy*=0.95;
     hh.life-=dt;if(hh.life<=0)heals.splice(hv,1);
   }
   for(var dn=dnums.length-1;dn>=0;dn--){
@@ -3984,6 +4334,42 @@ function drawAliens(){
     spr(a.fl>0?a.t.fl:a.t.spr,a.x,a.y);
     if(a.fl<=0&&a.solid)drawAlienDecay(a);
     ctx.globalAlpha=1;
+    /* A knitter at work puts its arms out: a stem either side with a hand on
+       the end, stitching up and down. The pluses say which alien is being
+       mended; this says which one is doing it, which is the half the player
+       actually has to act on. Each knitter keeps its own phase so a pair of
+       them do not move as one. */
+    if(a.t.heal&&a.healT>0){
+      var ph=a.arm||0,ax=Math.round(a.x),ay=Math.round(a.y),
+          mid=ay+Math.round(a.t.h*0.42),sd;
+      for(sd=-1;sd<=1;sd+=2){
+        var lift=Math.round(Math.sin(ph*11+(sd<0?0:2.1))*2),
+            ex=ax+sd*Math.round(a.t.w/2),
+            arx=(sd<0?ex-4:ex+1),hx=(sd<0?ex-5:ex+4),hy=mid+lift;
+        /* Clipped to the canvas by hand. A knitter at the edge of the screen
+           reached past it - invisible, since the canvas clips anyway, but
+           they were real draws going nowhere, and a test that identifies
+           affix pips by size and colour counted the hands as pips that had
+           left the screen. */
+        /* Both axes. The first pass clipped x only, so a knitter low on the
+           screen - and one lives until y>H+4 - drew its arms below the
+           canvas: 2.4% of all arm rects, invisible because the canvas clips,
+           but real draws going nowhere, which is the exact thing this was
+           meant to stop. The left edge needs the WIDTH trimmed too, or the
+           arm is drawn at full length from x=0 and laps over the sprite. */
+        if(mid>=0&&mid<H&&arx+4>0&&arx<W){
+          var ax0=Math.max(0,arx),aw=Math.min(arx+4,W)-ax0;
+          if(aw>0){ctx.fillStyle=a.t.col;ctx.fillRect(ax0,mid,aw,1);}
+        }
+        if(hx+2>0&&hx<W&&hy>=0&&hy+3<=H){
+          var hx0=Math.max(0,hx),hw=Math.min(hx+2,W)-hx0;
+          /* 2x3, not 2x2: a 2x2 green square is exactly what the SPLITTING
+             affix pip is, and two different things should not be the same
+             shape in the same colour. */
+          if(hw>0){ctx.fillStyle='#6bff8f';          /* the hand, mid-stitch */
+            ctx.fillRect(hx0,hy,hw,3);}}
+      }
+    }
     if(!a.solid&&a.y>2){                      /* dashed outline while phased */
       ctx.fillStyle='#9fb0c8';
       for(var d=0;d<bw;d+=4){ctx.fillRect(x0+d,Math.round(a.y)-2,2,1);
@@ -4162,7 +4548,11 @@ function drawHud(){
   /* never let it ride over the score on the left or the hearts on the right */
   var scoreEnd=2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
   wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-txtW(wTxt)));
-  txt(wTxt,wX,4,ins?C_INS:'#ffe066');
+  /* The wave reads in the bot's own mint while the bot is flying, so there is
+     never a doubt about who is at the controls. A colour rather than an extra
+     label: the bar is already tight and a new string would have to be fitted
+     between the score and the hearts. */
+  txt(wTxt,wX,4,autoPlay?'#7cf0c0':(ins?C_INS:'#ffe066'));
   /* second row: level, then the XP bar numbers. The XP multiplier used to sit
      at the right-hand end of this row, under the gear, and it crowded the
      hearts and the gear for room they now need. It is on the stats grid in
@@ -4417,6 +4807,11 @@ function rowStyle(label){
     return autoLevel?{c:'#ff5fd2',t:'#ffc4ef',i:IC_UP}:{c:'#5a6472',t:'#9aa7b5',i:IC_UP};
   if(label==='MOUSE STEER')
     return mouseSteer?{c:'#8fe9ff',t:'#d4f6ff',i:IC_STICK}:{c:'#5a6472',t:'#9aa7b5',i:IC_STICK};
+  /* Mint, and chosen by measurement rather than taste: the first pick was an
+     orange that turned out to be the INSANITY rarity colour exactly, and the
+     second was within 5 dE of the AUTO LEVEL pink right above it. This one is
+     39 dE from its nearest neighbour anywhere in the interface. */
+  if(label==='AI RUN')return {c:'#7cf0c0',t:'#d8fff0',i:IC_EYE};
   return ROWSTYLE[label]||{c:'#24405f',t:'#ffffff',i:null};
 }
 function drawIcon(rows,x,y,col){
@@ -4605,7 +5000,13 @@ function render(){
       else txt(banner,W/2,H/2-24,bc,true);
     }
     if(testRun&&(state===PLAY||state===LEVELUP))
-      txt('DEMO  FROM W'+startedAt,W/2,H-18,'#4fa3ff',true);
+      /* Both ride testRun, which is what keeps them off the leaderboard, but
+         they are not the same thing and the watermark should not say so.
+         The DEMO line cannot currently appear: nothing sets state=PICK since
+         the wave picker came off the menu. It stays with the rest of the
+         vaulted picker, which is one line from returning. */
+      if(autoPlay)txt('BOT  PILOTING',W/2,H-18,'#7cf0c0',true);
+      else txt('DEMO  FROM W'+startedAt,W/2,H-18,'#4fa3ff',true);
     if(alarmT>0){
       ctx.fillStyle='rgba(255,70,70,'+(0.30*alarmT/0.6).toFixed(3)+')';
       ctx.fillRect(0,0,W,H);
@@ -4695,10 +5096,20 @@ function render(){
 
 /* ================= loop ================= */
 var last=performance.now();
+/* The canvas is hidden in the stylesheet and this is the one place that shows
+   it: after the first render has actually put something on it. The whole game
+   is one 215KB inline script, so on a cold load the browser has the canvas
+   element long before it has finished parsing the code that sizes and draws
+   it - which is why the empty default-sized block only showed SOMETIMES. It
+   is a race, and a warm cache usually won it. render() fills the canvas edge
+   to edge before anything else, so by the time this runs there is a complete
+   frame underneath. */
+var shown=false;
 function frame(now){
   var dt=(now-last)/1000;last=now;
   if(dt>0.05)dt=0.05;
   update(dt);render();
+  if(!shown){shown=true;try{cv.style.visibility='visible';}catch(e){}}
   requestAnimationFrame(frame);
 }
 ship={x:W/2};aliens=[];bullets=[];rocks=[];parts=[];queue=[];wi=0;
