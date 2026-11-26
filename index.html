@@ -52,33 +52,49 @@ canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
 (function(){
 'use strict';
 
-/* ================= setup ================= */
-var W=256;
-/* The canvas follows the device's own aspect ratio, so a phone fills its
-   screen instead of sitting in a letterboxed block. Clamped to the band the
-   layout is designed for: 1.50x width (tablets, desktop windows) through
-   2.20x (tall 20:9 phones). */
-/* The canvas is shaped to the space it will actually be shown in, not to the
-   raw viewport. Shaping it to the viewport and then fitting it into a smaller
-   box left slack on one axis, which is where the black bars down the sides
-   came from: the badge strip ate the height, so the scale dropped, and the
-   width no longer reached the edges. Taking the strip off BEFORE choosing the
-   shape means the fit is tight on both axes. */
-function freeBox(){
-  var vw=(window.visualViewport&&window.visualViewport.width)||window.innerWidth||360;
-  var vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight||680;
-  return {w:Math.max(80,vw),h:Math.max(80,vh-badgeInset())};
-}
-function pickH(){
-  var b=freeBox(),a=b.h/b.w;
-  if(!(a>0.2&&a<8))a=1.90;
-  return Math.round(W*Math.max(1.50,Math.min(2.20,a))/2)*2;
-}
-var H=pickH();
-/* Balance was tuned on a 352-tall field. A taller field means a longer
-   descent, so every vertical speed scales with it and the time you get to
-   react is identical on every device. */
+/* ================= setup =================
+   A FIXED 640x360. This is a PC game now, so the canvas is 16:9 and the same
+   shape on every machine; a phone's aspect ratio is no longer something to
+   follow. The old code shaped the canvas to the device and clamped it to a
+   portrait band, which on a 1080p screen meant a 720-wide column with 1200px
+   of black bar either side of it.
+   640x360 because it lands on a WHOLE-NUMBER scale on the screens people
+   actually have - x2 at 720p, x3 at 1080p, x4 at 1440p, x6 at 4K, x3 on a
+   1920x1200 panel and x4 on a 3440x1440 ultrawide. Pixel art only looks
+   right at whole scales and a half-scale shows immediately on a 5x7 font.
+   Anything that is not 16:9 gets a letterbox, which is what a PC game does.
+   The height barely moved: 360 against the 384 a desktop window was already
+   getting, so the descent - and all the balance tuned against it - carries
+   over almost unchanged. The WIDTH going 2.5x is the real change. */
+var W=640,H=360;
 var REF_H=352, VS=H/REF_H;
+/* The same idea for sideways motion, which never needed it while the field
+   was always 256 wide. It does now: a bulwark crosses to a wall and steps
+   down, so on a 2.5x wider field at the old speed it reached a wall 2.5x
+   less often and crawled - measured at one step down where it used to
+   manage several, falling 91px in twenty seconds. Horizontal speeds scale
+   with the width exactly as vertical ones scale with the height, and a
+   crossing takes the same time it always did. */
+var REF_W=256, HS=W/REF_W;
+/* The interface keeps its ORIGINAL size and sits in a centred column. Panels
+   were written as W-60, W-24 and so on, which was right while W was 256 and
+   turned a button into a 580px bar the moment the canvas went wide. A menu
+   button is a menu button; it should not grow because the playfield did.
+   UI_X is the left edge of that column, so a panel that was x:30 w:W-60 on
+   the old canvas becomes UI_X+30 and UI_W-60 and comes out the same size it
+   always was, in the middle of the screen. */
+var UI_W=REF_W, UI_X=Math.round((W-UI_W)/2);
+/* ---- the playfield ----
+   The game is played in a SQUARE in the middle of the screen, not across the
+   whole canvas: 360 wide against the 360 the canvas is tall, leaving 140
+   either side for things that are not the game. Everything with a horizontal
+   position in play - lanes, the ship's travel, where a wall is for a bulwark,
+   where a meteor enters and is culled - is measured from FX to FR, never from
+   0 to W. The interface still uses the whole canvas.
+   This is also a balance change and not only a layout one: at wave 151 the
+   game runs 14 lanes, so a lane goes from 46px to 26px and late formations
+   are markedly tighter than they were across the full width. */
+var FIELD_W=360, FX=Math.round((W-FIELD_W)/2), FR=FX+FIELD_W, FCX=FX+Math.round(FIELD_W/2);
 var cv=document.getElementById('c'),ctx=cv.getContext('2d');
 var nameIn=document.getElementById('nameIn');
 cv.width=W;cv.height=H;ctx.imageSmoothingEnabled=false;ctx.textBaseline='top';
@@ -617,10 +633,63 @@ for(var ti=0;ti<SHIP_THEMES.length;ti++){
   if(!SHIP_THEMES[ti].H)SHIP_THEMES[ti].H=SHIP_THEMES[ti].A;
   SHIP_THEMES[ti].icon=mk(SHIP,SHIP_THEMES[ti]);
 }
-var SHIP_SPR=scale2(mk(SHIP,SHIP_THEMES[shipTheme]));
+/* Bullet colours, one per hull colour, so the gun can match the hull or
+   deliberately clash with it. B is the body, T the glint on its leading two
+   pixels - the same two-tone the gun has always drawn.
+   YELLOW is the exact pair it has fired since the beginning and stays the
+   default, so nobody's bullets change colour by installing this.
+   The other five were picked by measurement, not by eye: every body reads at
+   least 8:1 against the field's #05040c (yellow 15.7, green 12.0, orange 9.8,
+   purple 9.8, blue 9.5, red 9.3) and the closest pair of them is 36 dE apart,
+   so no two are mistakable. Red and purple started at 6.7 and 7.2 and were
+   lifted; lifting purple also took it from 13 dE off the insanity purple to
+   34, which it had been close enough to borrow meaning from. */
+var BULLET_THEMES=[
+  {k:'YELLOW',B:'#ffe066',T:'#fff7c2'},
+  {k:'BLUE',  B:'#5cb8ff',T:'#d6efff'},
+  {k:'RED',   B:'#ff8f8f',T:'#ffdede'},
+  {k:'GREEN', B:'#5ce07a',T:'#d6f7de'},
+  {k:'ORANGE',B:'#ff9c3a',T:'#ffe0c2'},
+  {k:'PURPLE',B:'#cfa0ff',T:'#f0ddff'}
+];
+var bulletTheme=0;                     /* the yellow it has always been */
+/* stored by name, like the hull, so reordering the row repaints nobody */
+try{var _bt=localStorage.getItem('vr_bullet');
+  if(_bt!==null)for(var bi0=0;bi0<BULLET_THEMES.length;bi0++)
+    if(BULLET_THEMES[bi0].k===_bt)bulletTheme=bi0;}catch(e){}
+/* YOUR ship, hull and gun together. The sprite's top pixel is D - the nose,
+   and the exact spot a bullet leaves from - so it is painted in the bullet's
+   colour rather than the flat white it shares with every other sprite. That
+   makes the gun read as the thing that fires those rounds.
+   Only your own ship: SHIP_THEMES[i].icon stays white-nosed, because that is
+   what paints OTHER people's ships on the leaderboard and what the hull
+   swatches show, and neither of those has anything to do with your gun. */
+function shipOver(i){
+  var o={},k;for(k in SHIP_THEMES[i])o[k]=SHIP_THEMES[i][k];
+  o.D=BULLET_THEMES[bulletTheme].B;
+  return o;
+}
+/* The menu shows the hull big, so it gets its own sprite at 9x rather than
+   the 2x the playfield uses. Both are rebuilt on a colour change - either
+   colour - and never per frame. */
+var MENU_SHIP_K=9,SHIP_RUN_K=2,SHIP_SPR,MENU_SHIP,SHIP_1X;
+function rebuildShip(){
+  var sp=mk(SHIP,shipOver(shipTheme));
+  /* The 1x hull is kept as well as the 2x and 9x ones. The launch draws from
+     THIS at whatever size it is passing through, so every frame is a plain
+     nearest-neighbour upscale of the original artwork. Scaling the 9x sprite
+     down instead drops whole rows of pixels at sizes that are not multiples
+     of nine, which is the other way this can look broken. */
+  SHIP_1X=sp;SHIP_SPR=scale2(sp);MENU_SHIP=scaleK(sp,MENU_SHIP_K);
+}
+rebuildShip();
 var SHIP_W=SHIP_SPR.width,SHIP_H=SHIP_SPR.height;
+function setBulletTheme(i){
+  bulletTheme=i;rebuildShip();
+  try{localStorage.setItem('vr_bullet',BULLET_THEMES[i].k);}catch(e){}
+}
 function setShipTheme(i){
-  shipTheme=i;SHIP_SPR=scale2(mk(SHIP,SHIP_THEMES[i]));
+  shipTheme=i;rebuildShip();
   try{localStorage.setItem('vr_ship',SHIP_THEMES[i].k);}catch(e){}
 }
 /* the ship's hitbox is deliberately tighter than its art: the wings are
@@ -1012,7 +1081,13 @@ var DMG_MIN=DMG*0.1;
 /* Three hearts is the whole hull, start and ceiling both. A boss can mend you
    back to three but never past it, so the hull is a thing you protect rather
    than a bar you grow. */
-var SHIP_SPD=360,SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=3,INVULN=2.0;
+/* Scaled with the width, so crossing the field still takes the 0.71s it
+   always did. A 2.5x wider field at the old 360 would have taken 1.78s and
+   the ship simply could not have covered it. This is a STOPGAP: once the
+   mouse aims the gun independently, covering ground stops being how you
+   reach a target and this should come back down. */
+var SHIP_SPD=Math.round(360*HS),
+    SHIP_Y=H-Math.round(52*VS),START_LIVES=3,MAX_LIVES=3,INVULN=2.0;
 /* ===== hull =====
    Hearts are four segments each, and the hull is counted in segments, so the
    roster's weight range finally shows up in what a touch costs you: a mite
@@ -1042,6 +1117,11 @@ function hearts(){return Math.ceil(hp/SEG);}
    second back on the other side is enough to move out of the way and not
    enough to walk through anything. */
 var LVL_INVULN=0.5;
+/* A beat between the ship landing and the controls biting. Without it, a
+   mouse moved or a key held during the flight in was applied the instant the
+   hold ended: the ship teleported to wherever the pointer happened to be,
+   right as the animation finished. */
+var MOVE_LOCK=0.5, moveT=0;
 /* A card screen opens on top of wherever the player's thumb already is. The
    ship sits at y472 and the third card's band is y447-499, so the hand that
    was dragging to dodge is ALREADY inside a card: the next touch - the natural
@@ -1076,7 +1156,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.68';
+var VERSION='V2.100';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
@@ -1330,6 +1410,10 @@ function ac(){
   return AC;
 }
 function beep(f,dur,vol,type,slide,ch){
+  /* The tutorial fast-forwards a real run by 96 frames to get a screenful of
+     aliens. That is a second and a half of shooting and spawning arriving in
+     one go, which without this lands as a single burst of noise. */
+  if(tutQuiet)return;
   var lv=vol*vmul()*(ch===undefined?1:ch);
   if(lv<=0.0002)return;
   var a=ac();if(!a)return;
@@ -1442,6 +1526,13 @@ var sfx={
     setTimeout(function(){beep(294,0.22,0.050,'triangle',247);},110);
     setTimeout(function(){beep(196,0.50,0.055,'sine',147);},230);},
   pick:function(){beep(880,0.07,0.05,'square');setTimeout(function(){beep(1320,0.1,0.05,'square');},70);},
+  /* Going in and coming back out: the SAME two notes, in opposite order. A
+     rising pair reads as a door opening and a falling pair as it closing,
+     and using one interval for both means they are heard as a pair rather
+     than as two unrelated noises. Lower and shorter than pick, which stays
+     on the taps that are choices rather than journeys. */
+  open:function(){beep(587,0.06,0.045,'square');setTimeout(function(){beep(880,0.09,0.045,'square');},60);},
+  back:function(){beep(880,0.06,0.040,'square');setTimeout(function(){beep(587,0.10,0.040,'square');},60);},
   /* warm and round, so it reads as relief rather than the level-up arpeggio */
   lifeGain:function(){
     beep(440,0.14,0.070,'triangle');
@@ -1572,7 +1663,7 @@ var stars=[];
 })();
 
 /* ================= state ================= */
-var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7,INFO=8;
+var MENU=0,PLAY=1,OVER=2,WIN=3,LEVELUP=4,SETTINGS=5,PICK=6,BOARD=7,INFO=8,TUT=9;
 var state=MENU,infoBack=MENU;   /* HOW TO PLAY returns where it came from */
 var ship,aliens,bullets,rocks,parts,queue,wi,curw,conc,gap,spawnT,mplan,mT,blockT;
 var level,xp,xpNeed,pendLv,choices;
@@ -1604,10 +1695,10 @@ var dragBoard=false,dragY=0,dragFrom=0;
    early game keeps the five it always had. */
 var LANES_MAX=14;
 function laneCount(w){return Math.min(LANES_MAX,5+Math.max(0,Math.floor((w-50)/8)));}
-function laneX(i,n){return Math.round((i+0.5)*(W/(n||laneCount(wi+1))));}
+function laneX(i,n){return FX+Math.round((i+0.5)*(FIELD_W/(n||laneCount(wi+1))));}
 /* Never wider than the gap between two columns, or adjacent ones would refuse
    each other and the extra columns would buy nothing. */
-function clashX(w){return Math.min(46,Math.floor(W/laneCount(w))-3);}
+function clashX(w){return Math.min(46,Math.floor(FIELD_W/laneCount(w))-3);}
 
 /* An alien is worth a flat amount. SCORE banks the raw figure so runs stay
    comparable, while XP is what the multiplier acts on. */
@@ -1629,11 +1720,14 @@ function setShowsRun(){return !fromMenu();}
    settings page already uses to decide whether to show its stat grid, so the
    background and the page cannot disagree about whether a run is up. */
 function runBehind(){
-  return state===PLAY||state===OVER||state===WIN||state===LEVELUP||
+  return state===PLAY||state===OVER||state===WIN||state===LEVELUP||state===TUT||
          (state===SETTINGS&&setShowsRun());
 }
 function setRowGap(n){
-  var fixed=14+(setShowsRun()?FH+STATGRID_H+(shield?12:0):0)+FH;
+  /* No STATGRID_H any more: the pause screen's wave line is all that sits
+     between its heading and its rows. Leaving the grid's 41px in here
+     reserved room for something that is not drawn and squeezed the rows. */
+  var fixed=14+(setShowsRun()?FH+(shield?12:0):0)+FH;
   var avail=H-(setShowsRun()?HUD_H:0)-fixed-6*6;
   var g=SET_ROW_GAP;
   if(n>1&&n*SET_ROW_H+(n-1)*g>avail)g=Math.max(3,Math.floor((avail-n*SET_ROW_H)/(n-1)));
@@ -1643,8 +1737,8 @@ function setRowGap(n){
 function setStack(){
   var n=pageRows().length,g=setRowGap(n);
   var hs=[14],idx={head:0};
-  if(setShowsRun()){hs.push(FH);idx.sub=hs.length-1;
-                    hs.push(STATGRID_H+(shield?12:0));idx.stats=hs.length-1;}
+  if(setShowsRun()){hs.push(FH+(shield?12:0));idx.sub=hs.length-1;
+                    idx.stats=idx.sub;}
   hs.push(n*SET_ROW_H+(n-1)*g);idx.rows=hs.length-1;
   hs.push(FH);idx.ver=hs.length-1;
   var st=evenStack(setShowsRun()?HUD_H:0,H,hs);
@@ -1652,15 +1746,15 @@ function setStack(){
 }
 function pageRect(i){
   var st=setStack();
-  return {x:22,y:st.ys[st.i.rows]+i*(SET_ROW_H+st.rowGap),w:212,h:SET_ROW_H};
+  return {x:UI_X+22,y:st.ys[st.i.rows]+i*(SET_ROW_H+st.rowGap),w:212,h:SET_ROW_H};
 }
-function backRect(){return {x:22,y:H-56,w:212,h:26};}
+function backRect(){return {x:UI_X+22,y:H-56,w:212,h:26};}
 var CHAN=[['MASTER','#4fa3ff'],['MUSIC','#c86bff'],['BULLETS','#ffb03a']];
 var dragChan=-1;
 function chanRect(i){
   var h=54,gap=10,n=3,tot=n*h+(n-1)*gap;
   var top=Math.max(72,Math.round((H-56-tot)/2));
-  return {x:20,y:top+i*(h+gap),w:216,h:h};
+  return {x:UI_X+20,y:top+i*(h+gap),w:216,h:h};
 }
 function chanToggle(i){var r=chanRect(i);return {x:r.x+r.w-60,y:r.y+4,w:56,h:20};}
 function chanTrack(i){var r=chanRect(i);return {x:r.x+14,y:r.y+34,w:r.w-62,h:6};}
@@ -1677,18 +1771,31 @@ function chanSet(i,mx){
   if(i===0)sndMaster=v;else if(i===1)sndMusic=v;else sndShot=v;
   syncVol();saveSnd();
 }
-function swatchRect(i){
-  var n=shipList().length;
-  var rows=Math.ceil(n/3),tot=rows*46+(rows-1)*10;
-  var top=Math.max(84,Math.round((H-56-tot)/2));
+/* One 3-across grid of 60x46 squares, 72 apart, so it spans 204. Used twice
+   on the customise page: hulls in the left half, bullet colours in the right.
+   `cx` is where the grid's middle sits. */
+var SW_W=60,SW_H=46,SW_DX=72,SW_DY=56,SW_SPAN=2*SW_DX+SW_W;
+function swatchGrid(i,n,cx,top){
   var row=Math.floor(i/3),col=i%3;
   /* A lone square on the last row sits in the middle rather than hanging off
-     the left edge. */
+     the left edge; two sit either side of it. */
   var inRow=Math.min(3,n-row*3);
   if(inRow===1)col=1;
   else if(inRow===2)col=col+0.5;
-  return {x:Math.round(24+col*72),y:top+row*56,w:60,h:46};
+  var gx=Math.round(cx-SW_SPAN/2);
+  return {x:Math.round(gx+col*SW_DX),y:top+row*SW_DY,w:SW_W,h:SW_H};
 }
+/* The two columns of the customise page. Both grids start at the same height
+   so the two headings line up. */
+function swatchTop(){
+  var n=Math.max(shipList().length,BULLET_THEMES.length);
+  var rows=Math.ceil(n/3),tot=rows*SW_H+(rows-1)*(SW_DY-SW_H);
+  return Math.max(104,Math.round((H-56-tot)/2)+8);
+}
+function hullCX(){return Math.round(W/2-SW_SPAN/2-20);}
+function bullCX(){return Math.round(W/2+SW_SPAN/2+20);}
+function swatchRect(i){return swatchGrid(i,shipList().length,hullCX(),swatchTop());}
+function bulletRect(i){return swatchGrid(i,BULLET_THEMES.length,bullCX(),swatchTop());}
 /* Closing settings has to go back where it came from. Returning to PLAY from
    the menu dropped the player into a live run with an empty field, and the
    wave-clear check then fired instantly and skipped them to wave 2. */
@@ -1697,6 +1804,7 @@ function openSettings(){
   /* Remember where we came from: the gear is reachable from the card screen
      too, and closing must put the cards back rather than drop you into play
      with an unspent level. */
+  sfx.open();          /* every way in is a way in: the gear, P, or Escape */
   setPage=0;setBack=(state===LEVELUP)?LEVELUP:PLAY;state=SETTINGS;MUS.stop();
 }
 function closeSettings(){
@@ -1725,13 +1833,20 @@ function pageRows(){
 function gpRows(){
   var r=[['DAMAGE NUMBERS',dmgNumbers?'ON':'OFF'],
          ['AUTO LEVEL',autoLevel?'ON':'OFF']];
-  if(hasMouse())r.push(['MOUSE STEER',mouseSteer?'ON':'OFF']);
-  r.push(['HOW TO PLAY','']);
+  /* CONTROLS, not PREFERRED CONTROLS: the row is 212 wide and the label
+     would end at 136 with KEYBOARD PILOTING needing to start at 103 - a
+     33px clash. The full words are on the value, which is the half that
+     changes. */
+  if(hasMouse())r.push(['CONTROLS',mouseSteer?'MOUSE PILOTING':'KEYBOARD PILOTING']);
+  /* CARD GUIDE, not HOW TO PLAY. The menu's HOW TO PLAY became the tutorial,
+     and leaving this row under the old name meant two different things
+     answering to it - a new player picking the one that sounds like a lesson
+     and getting a reference table of card values instead. */
+  r.push(['CARD GUIDE','']);
   /* Last, below HOW TO PLAY, because HOW TO PLAY was put directly under AUTO
      LEVEL on purpose and nothing should come between them. And only from the
      menu: this starts a fresh run, so offering it mid-run would be a button
      that silently throws away the run behind it. */
-  if(fromMenu())r.push(['AI RUN','']);
   return r;
 }
 /* The AUTO LEVEL caption used to hang under whatever row happened to be last.
@@ -1752,7 +1867,7 @@ function pfRows(){
 }
 function pfRect(i){
   var h=30,gap=12,n=pfRows().length,tot=n*h+(n-1)*gap;
-  return {x:22,y:Math.max(84,Math.round((H-56-tot)/2))+i*(h+gap),w:212,h:h};
+  return {x:UI_X+22,y:Math.max(84,Math.round((H-56-tot)/2))+i*(h+gap),w:212,h:h};
 }
 /* The card floats over the settings page, so a run paused underneath stays
    exactly where it was. */
@@ -1768,7 +1883,7 @@ function gpRect(i){
   var pad=(ca>=0&&ca<n-1)?GP_CAP:0;        /* only when something is below it */
   var tot=n*h+(n-1)*gap+pad;
   var top=Math.max(80,Math.round((H-56-tot)/2));
-  return {x:22,y:top+i*(h+gap)+((ca>=0&&i>ca)?pad:0),w:212,h:h};
+  return {x:UI_X+22,y:top+i*(h+gap)+((ca>=0&&i>ca)?pad:0),w:212,h:h};
 }
 /* Dispatched on the row's LABEL. Dropping the METEORS row shifted every index
    below it, which is exactly how an index-based switch fires the wrong
@@ -1781,18 +1896,10 @@ function gpActivate(i){
     try{localStorage.setItem('vr_dmgnum',dmgNumbers?'1':'0');}catch(e){}}
   else if(lab==='AUTO LEVEL'){autoLevel=!autoLevel;sfx.pick();
     try{localStorage.setItem('vr_auto',autoLevel?'1':'0');}catch(e){}}
-  else if(lab==='MOUSE STEER'){mouseSteer=!mouseSteer;sfx.pick();
+  else if(lab==='CONTROLS'){mouseSteer=!mouseSteer;sfx.pick();
     if(!mouseSteer)ptr.active=false;        /* let go of the ship right away */
     try{localStorage.setItem('vr_msteer',mouseSteer?'1':'0');}catch(e){}}
-  else if(lab==='AI RUN'){
-    /* Straight to the wave picker, which then starts a real run - same
-       waves, same cards, same everything - with the bot at the controls.
-       jumpToWave sets testRun, which is what keeps it off the leaderboard:
-       the board is for people. */
-    sfx.pick();closeSettings();
-    pickBot=true;pickBuf='';state=PICK;
-  }
-  else if(lab==='HOW TO PLAY'){sfx.pick();infoBack=SETTINGS;state=INFO;}
+  else if(lab==='CARD GUIDE'){sfx.open();infoBack=SETTINGS;state=INFO;}
 }
 /* Dispatched on the row's label, not its position. The list differs between
    the menu and a paused run and has been reordered more than once; an
@@ -1801,7 +1908,10 @@ function activateRow(i){
   var rows=pageRows();
   if(i<0||i>=rows.length)return;
   var label=rows[i][0];
-  sfx.pick();
+  /* Three of these go deeper, two ask a question, and the rest come back out. */
+  if(label==='PROFILE'||label==='SOUND'||label==='GAMEPLAY')sfx.open();
+  else if(label==='MAIN MENU'||label==='RESTART RUN')sfx.pick();
+  else sfx.back();
   if(label==='PROFILE')setPage=4;
   else if(label==='SOUND')setPage=2;
   else if(label==='GAMEPLAY')setPage=3;
@@ -1960,7 +2070,12 @@ function jumpToWave(n){
   hp=START_HP;shield=false;                  /* no freebies for skipping ahead */
   testRun=true;startedAt=n;  /* reset() cleared it, set it back */
   autoPlay=pickBot;pickBot=false;   /* reset() cleared this too; consume it */
-  if(autoPlay){banner='BOT PILOTING';bannerT=2.2;}
+  /* No banner of its own. startWave above has already set 'WAVE 30', and
+     announcing the pilot here overwrote it - so the one run where you most
+     want to know which wave you jumped to was the one run that did not say.
+     The watermark along the bottom says who is flying, for the whole run
+     rather than for two seconds. Boss waves get their boss named again too,
+     which the override had also been swallowing. */
   state=PLAY;MUS.start();
 }
 function buildQueue(w){
@@ -1985,9 +2100,17 @@ function startWave(n){
   MUS.stage=musStage(wi);
   banner='WAVE '+(wi+1);
   if(curw.boss)banner='WAVE '+(wi+1)+'   '+bossFor(wi).nm;
+  /* The tutorial builds its demo by starting a real wave, twice over - once
+     in reset and once at the wave it jumps to. Neither is a wave the player
+     is starting, so neither announces one: no banner over the lesson and no
+     fanfare behind the menu's own open note. */
+  if(tutQuiet)return;
   bannerT=1.9;sfx.wave();
 }
 function reset(){
+  warpT=WARP_DUR;              /* every way into a run gets the warp */
+  launchT=LAUNCH_DUR;          /* ...and the flight down from the menu */
+  uiT=LAUNCH_DUR+UI_FADE-UI_LEAD;
   ship={x:W/2};
   /* The bot drives by setting ptr.active every frame and never clears it, so
      a run started straight after one - by keyboard, with no tap release and
@@ -2002,7 +2125,13 @@ function reset(){
   /* gameT goes back to 0 here, so a timestamp left over from the last run
      would read as far in the future and silence the gun until it caught up */
   shotSndT=-1;lvlSndT=-1;
-  fireT=0;shake=0;invT=INVULN;lvlInvT=0;respawnT=0;blockT=0;
+  /* invT 0, not INVULN. A run opens on an empty field behind a flight down
+     and half a second of locked input, so there is nothing to be protected
+     from - and because the launch hold returns before invT is ticked, the
+     whole two seconds of it was spent blinking AFTER the ship landed, which
+     read as a ship that had just died. The grace that follows a real death
+     is untouched; it is granted where the death happens. */
+  fireT=0;shake=0;invT=0;lvlInvT=0;respawnT=0;blockT=0;moveT=MOVE_LOCK;
   level=1;xp=0;xpNeed=xpForLevel(1);pendLv=0;choices=null;
   upFire=1;upDmg=1;upLuck=0;upCrit=0;upCritD=1.1;upXp=1;shield=false;dnums=[];ups=[];
   startWave(0);state=PLAY;MUS.start();testRun=false;startedAt=1;confirmAct='';
@@ -2144,6 +2273,19 @@ function bruteSpawnY(t,sy0){
   }
   return top;
 }
+/* One alien, built the one way. Pulled out of spawnAlien so the tutorial can
+   ask for a named kind at a named place without keeping a second copy of this
+   object's shape - which would have gone stale the first time an alien gained
+   a field. */
+function newAlien(t,x,y,spd,afx){
+  var hp=hpOf(t),sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
+  return {t:t,x:x,y:y,hp:hp,max:hp,fl:0,spd:spd,base:spd,
+    sh:sh0,shmax:sh0,
+    quiet:0,ph:0,solid:true,
+    dir:(Math.random()<0.5?-1:1),drop:0,
+    afx:afx.list,drp:afx.drp,regen:afx.regen,splits:afx.splits,
+    bites:makeAlienBites(t,5+Math.floor(t.w/8))};
+}
 function spawnAlien(force){
   if(!queue.length)return true;
   /* Normally the front of the queue, but a brute waits its turn when there
@@ -2193,14 +2335,8 @@ function spawnAlien(force){
   }
   queue.splice(qi,1);
   var x=laneX(lane,LN)+Math.round((Math.random()*2-1)*5),half=t.w/2;
-  x=Math.max(half+2,Math.min(W-half-2,x));
-  var hp=hpOf(t),sh0=(t.shield?t.shield*curw.hp:0)+afx.sh;
-  aliens.push({t:t,x:x,y:sy0,hp:hp,max:hp,fl:0,spd:spd,base:spd,
-    sh:sh0,shmax:sh0,
-    quiet:0,ph:0,solid:true,
-    dir:(Math.random()<0.5?-1:1),drop:0,
-    afx:afx.list,drp:afx.drp,regen:afx.regen,splits:afx.splits,
-    bites:makeAlienBites(t,5+Math.floor(t.w/8))});
+  x=Math.max(FX+half+2,Math.min(FR-half-2,x));
+  aliens.push(newAlien(t,x,sy0,spd,afx));
   if(t.boss)sfx.bossIn();        /* only once it is really on screen */
   return true;
 }
@@ -2214,8 +2350,8 @@ function spawnMeteor(){
     var roll=Math.random()*ROCK_TOTAL,def=ROCKS[0],acc=0,i;
     for(i=0;i<ROCKS.length;i++){acc+=ROCKS[i].weight;if(roll<=acc){def=ROCKS[i];break;}}
     var r=def.r;
-    var cx=r+6+Math.random()*(W-2*(r+6));        /* where it crosses the ship line */
-    var sx=-40+Math.random()*(W+80);             /* entry point, may be off-screen */
+    var cx=FX+r+6+Math.random()*(FIELD_W-2*(r+6));  /* where it crosses the ship line */
+    var sx=FX-40+Math.random()*(FIELD_W+80);     /* entry point, may be off-field */
     var sy=-r-8;
     var dx=cx-sx,dy=LINE_Y-sy,len=Math.sqrt(dx*dx+dy*dy);
     var spd=def.spd*(0.9+Math.random()*0.25)*(mplan?mplan.spd:1);
@@ -2335,14 +2471,14 @@ function addDmgNum(cx,cy,v,crit,halfW){
   /* Walk outwards on both sides, and if the row is packed, step above it.
      The first spot clear of EVERY sprite wins, so a number never lands in a
      neighbour either; the roomier side is tried first. */
-  var toCentre=(cx>W/2)?-1:1;
+  var toCentre=(cx>FCX)?-1:1;
   var x=null,y=cy-3,bx=null,bs=-1e9,ci,ri,px,py,sc;
   var rowY=[cy-3,cy-14,cy-24];
   for(ri=0;ri<rowY.length&&x===null;ri++){
     for(ci=0;ci<6;ci++){
       px=cx+(off+(ci>>1)*16)*((ci%2===0)?toCentre:-toCentre);
       py=rowY[ri];
-      if(px-half<2||px+half>W-2)continue;
+      if(px-half<FX+2||px+half>FR-2)continue;
       sc=clearanceAt(px,half,py);
       if(sc>bs){bs=sc;bx=px;y=py;}
       if(sc>=1){x=px;y=py;break;}
@@ -2351,13 +2487,13 @@ function addDmgNum(cx,cy,v,crit,halfW){
   if(x===null){
     /* Row packed solid: the margins are nearly always empty, so take the
        clearer edge rather than dropping the number inside a sprite. */
-    var le=2+half,re=W-2-half,ly=rowY[0];
+    var le=FX+2+half,re=FR-2-half,ly=rowY[0];
     var lc=clearanceAt(le,half,ly),rc=clearanceAt(re,half,ly);
     if(Math.max(lc,rc)>=1){x=(lc>=rc)?le:re;y=ly;}
     else {x=(bx===null)?cx:bx;if(y===null)y=cy-3;}
   }
   if(x-half<2)x=2+half;
-  if(x+half>W-2)x=W-2-half;
+  if(x+half>FR-2)x=FR-2-half;
   var i,tries=0;
   while(tries<4){                           /* keep stacked hits legible */
     var clash=false;
@@ -2405,7 +2541,7 @@ function txtHalo(s,x,y,col,glow,t){
 function drawUpPops(){
   for(var i=0;i<ups.length;i++){
     /* above the ship, not below it, and held off the right edge */
-    var u=ups[ups.length-1-i],y=SHIP_Y-16-i*9,x=W-10-txtW(u.s);
+    var u=ups[ups.length-1-i],y=SHIP_Y-16-i*9,x=FR-10-txtW(u.s);
     if(y<40)break;
     ctx.globalAlpha=Math.max(0,Math.min(1,u.life/0.45));
     /* Only the newest few are haloed. Each halo is twelve extra text draws,
@@ -2820,7 +2956,31 @@ function drawShipMark(x,y,k){
 /* Everything on the menu hangs off this margin rather than sitting at a fixed
    y, so a tall phone gives the title room to breathe instead of pinning it to
    the top edge, and a short canvas still fits. */
-function menuTop(){return Math.round(H*0.045);}
+/* ---- the wide menu ----
+   Three columns on a 640 canvas: empty on the left for whatever goes there
+   later, the buttons through the middle, and the board down the right. The
+   wordmark runs across the top above all three, which is the only way it can
+   be this big - at 5x 'VOID RUNNER' is 325 of the 640 columns, wider than the
+   middle column on its own.
+   The board's width is not a taste: a row carries rank, hull, name and then
+   WAVE and SCORE under them, and the widest of those needs 181px. 196 is that
+   plus padding, and everything else is laid out around it. */
+var LB_W=180, LB_PAD=16,
+    LB_X=W-LB_PAD-LB_W,               /* inset from the edge, so it reads as a box */
+    MENU_W=200,
+    /* The buttons sit on the true centre of the screen. At 196 the box pushed
+       them 16px left of it to keep a 20px gap, which was visible. 184 is the
+       narrowest the box goes with both labels spelled out: a row holds
+       'WAVE 999' and 'SCORE 9999999' with 7px to spare, and past that the
+       score sheds its label rather than running over the wave. 184 looked
+       like it fitted and was out by one pixel on a 13-character name. */
+    MENU_CX=Math.round(W/2),
+    /* The board has its own top, lower than the buttons'. Started level with
+       them at MENU_TOP it sat 10px under the build badge and read as hanging
+       off the title. At 100 it brackets the button stack (107-301) instead. */
+    LB_TOP=94,
+    MENU_GAP=LB_X-(MENU_CX+Math.round(MENU_W/2)),
+    MENU_TOP=74;                      /* clear of the wordmark */
 /* There used to be a strapline here. With it gone the board moves up to close
    the gap rather than leaving a hole where the text was. */
 /* Two lines to a row. On one line the numbers took everything and a name was
@@ -2833,17 +2993,17 @@ var LB_ROWS=5,LB_RH=28;
    which costs height - and on a very short canvas the four menu buttons below
    cannot then reach their minimum size without running into the footer. There
    the board gives up a row rather than the menu giving up a button. */
+/* However many fit in the box down the right, which no longer competes with
+   the buttons for height - they are side by side now. */
 function lbRows(){
-  var n=LB_ROWS;
-  while(n>3&&lbTop()-10+(n*LB_RH+14)+22+(4*26+3*5)>H-46)n--;
-  return n;
+  return Math.max(1,Math.min(LB_ROWS,Math.floor((H-24-lbTop())/LB_RH)));
 }
 /* The build badge's two dials. TB_BOB is how far it travels from centre, in
    whole pixels because the glyphs are pixels - there is no half step between 1
    and 2. Both the bob's own cap and the wordmark lift below are derived from
    these, so changing one number moves everything that depends on it. */
 var TB_CLEAR=2,TB_BOB=1;
-function lbTop(){return menuTop()+21+Math.round(H*0.040)+26;}
+function lbTop(){return LB_TOP+44;}              /* under its own 2x heading */
 /* The wordmark normally sits at the top of the menu stack, but on a canvas
    squashed to the 1.50 aspect floor the gap beneath it is 11px, which a 7px
    badge cannot bob inside without touching the wordmark or the heading under
@@ -2851,18 +3011,29 @@ function lbTop(){return menuTop()+21+Math.round(H*0.040)+26;}
    down to four rows - so the wordmark lifts by the shortfall instead, which
    costs nothing but the air above it and leaves the rest of the stack where it
    was. Tall screens have the room already and are untouched. */
-function titleY(){
-  var want=FH+TB_CLEAR*2+TB_BOB*2;           /* glyph, its air, and room to bob */
-  var have=(lbTop()-30)-(menuTop()+FH*3);
-  return Math.max(4,menuTop()-Math.max(0,want-have));
-}
-function menuStackEnd(){var p=lbPanel();return p.y+p.h+14;}
-function lbPanel(){return {x:12,y:lbTop()-10,w:W-24,h:lbRows()*LB_RH+14};}
+/* The wordmark sits across the top, above all three columns, and nothing
+   competes with it for that strip any more - the board moved to the right.
+   It used to shuffle itself upward to buy air for the build badge, which was
+   only ever needed because a heading sat 30px under it. */
+var TITLE_K=5;                                /* 'VOID RUNNER' is 325px at 5x */
+function titleY(){return 12;}
+function menuStackEnd(){return MENU_TOP;}   /* the board is beside the buttons now, not above them */
+/* Sized to what is in it, not run down to the bottom of the screen: held to
+   the full height it was 262 tall with the hint ending at y251, so 85px of
+   it - almost a third - was empty. The 80 is everything that is not a row:
+   23 above the heading, the heading itself and the gap under it, then the
+   hint and 23 below that. Five rows makes it 220.
+   The width is at its practical floor at 180. A row has to hold the name
+   column plus 'WAVE 100' and 'SCORE 1234567' spelled out on one line, which
+   needs 92px of clearance before the right-aligned score; 180 leaves 2px over
+   that, and 178 leaves none. Going thinner means the score shedding its label
+   on ordinary rows, or the row being restacked onto three lines. */
+function lbPanel(){return {x:LB_X,y:LB_TOP,w:LB_W,h:80+lbRows()*LB_RH};}
 var C_GOLD='#ffd34d';
 /* Insanity has one colour wherever it is marked - the board and the HUD - so
    a purple wave number means the same thing in both places. */
 var C_INS='#c86bff';
-function lbRowRect(i){return {x:16,y:lbTop()+i*LB_RH,w:W-32,h:LB_RH};}
+function lbRowRect(i){return {x:LB_X+3,y:lbTop()+i*LB_RH,w:LB_W-6,h:LB_RH};}
 
 /* the name card, drawn over the menu */
 /* The code modes carry a line under the field - a status message, or the
@@ -2873,7 +3044,7 @@ function cardTall(){return promptMode==='code'||promptMode==='show';}
    card and its buttons move up out of the way. Nothing is typed on the
    read-only code card, so that one stays where a modal normally sits. */
 function cardTop(){return Math.round(H*(promptMode==='show'?0.30:0.15));}
-function nameCard(){return {x:20,y:cardTop(),w:W-40,h:cardTall()?122:104};}
+function nameCard(){return {x:UI_X+20,y:cardTop(),w:UI_W-40,h:cardTall()?122:104};}
 function nameFieldRect(){var c=nameCard();return {x:c.x+14,y:c.y+34,w:c.w-28,h:22};}
 function nameBtnTop(){var c=nameCard();return c.y+(cardTall()?86:68);}
 /* Dismiss sits on the left, confirm on the right. */
@@ -2892,29 +3063,86 @@ function drawLbRow(r,row,rank,me){
   if(me){ctx.fillStyle='rgba(143,233,255,0.10)';ctx.fillRect(r.x,r.y,r.w,r.h);}
   var y1=r.y+4,y2=r.y+15;
   txt(rank,r.x+3,y1,rank<=3?'#ffd34d':'#5f6a7a');
-  drawShipMark(r.x+20,r.y+Math.round((r.h-SHIP.length)/2),row.ship);
-  var nX=r.x+20+SHIPMARK_W+6;
+  drawShipMark(r.x+18,r.y+Math.round((r.h-SHIP.length)/2),row.ship);
+  var nX=r.x+18+SHIPMARK_W+6;
   txt(String(row.name||'ANON'),nX,y1,me?'#ffffff':'#9fd8ff');
+  /* Both spelled out. Shortening this to 'W1480' to buy width broke two
+     suites that assert the board spells the wave out and leaves no cryptic
+     W42 - a decision already made on purpose, so the box was sized to the
+     text instead of the text cut to the box. */
   var wTxt='WAVE '+row.wave,sTxt='SCORE '+row.score;
   /* past the gate the wave goes purple: that run was fought in insanity */
   txt(wTxt,nX,y2,row.wave>MAXWAVE?C_INS:'#ffe066');
-  txt(sTxt,nX+txtW(wTxt)+10,y2,'#7fb4e8');
+  /* The score hangs off the RIGHT edge of the row rather than being pushed
+     along from the wave, so the pair cannot drift off the end of the box as
+     the numbers grow - and if the two would still meet, the score drops its
+     label rather than overlapping. A nine-digit score needed 193px of a
+     188px row even before the box was narrowed. */
+  var sRight=r.x+r.w-3;
+  if(sRight-txtW(sTxt)<nX+txtW(wTxt)+6)sTxt=String(row.score);
+  txt(sTxt,sRight-txtW(sTxt),y2,'#7fb4e8');
+}
+/* The left column: your ship, the size the board is, and the way into the
+   customise page. The board sits 16px off the right edge, so this sits 16px
+   off the left one and they read as a pair either side of the buttons. */
+function shipPanel(){return {x:LB_PAD,y:MENU_TOP,w:LB_W,h:H-24-MENU_TOP};}
+/* No frame and no labels: the ship sitting in open space reads as the ship,
+   where a box and three captions read as another panel competing with the
+   board. The hull colour is the ship, the gun colour is its nose, and both
+   are visible without being written out. The whole area is still the hit
+   target - the one line of text says so. */
+/* Where the hull actually sits inside its column - the draw and the press
+   highlight both read it from here, so they cannot drift apart. */
+function menuShipRect(){
+  var p=shipPanel(),cx=p.x+Math.round(p.w/2);
+  return {x:cx-Math.round(MENU_SHIP.width/2),
+          y:p.y+Math.round((p.h-MENU_SHIP.height)/2)-12,
+          w:MENU_SHIP.width,h:MENU_SHIP.height};
+}
+function drawShipBlock(){
+  var p=shipPanel(),cx=p.x+Math.round(p.w/2);
+  var sy=menuShipRect().y;
+  /* The same jet the playfield draws, at this ship's scale: two stacked rects,
+     orange around yellow, re-rolled every frame so it flickers. The playfield
+     draws them 8 and 4 wide off a 2x sprite, starting one sprite-pixel above
+     its bottom edge, so at 9x they are 4 and 2 sprite-pixels wide and start
+     9px up. With the starfield already drifting past, the ship reads as under
+     power rather than parked.
+     It stays the engine's own orange and yellow: the nose carries the gun's
+     colour, and having the exhaust follow it too would leave nothing on the
+     ship that is actually the hull's. */
+  var sx=menuShipRect().x;
+  drawThrust(sx,sy+MENU_SHIP.height-MENU_SHIP_K,MENU_SHIP_K,Math.random());
+  ctx.drawImage(MENU_SHIP,sx,sy);
+  txt('TAP TO CUSTOMISE',cx,p.y+p.h-16,'#2e3f58',true);
 }
 function drawBoardBlock(){
   var p=lbPanel();panel(p,C_GOLD);
-  txtBig('LEADERBOARD',W/2,lbTop()-30,C_GOLD,2);
+  txtBig('LEADERBOARD',LB_X+Math.round(LB_W/2),LB_TOP+23,C_GOLD,2);
   if(!LB.rows.length){
-    txt(LB.busy?'LOADING':'NO RUNS YET',W/2,p.y+Math.round(p.h/2)-10,'#3f6490',true);
-    txt(LB.busy?'':'BE THE FIRST',W/2,p.y+Math.round(p.h/2)+2,'#2e3f58',true);
+    /* Centred on its own panel, not on the canvas. While the board sat in the
+       middle those were the same number; now the board is off to the right and
+       W/2 put this message straight across the menu buttons. */
+    txt(LB.busy?'LOADING':'NO RUNS YET',p.x+Math.round(p.w/2),p.y+Math.round(p.h/2)-10,'#3f6490',true);
+    txt(LB.busy?'':'BE THE FIRST',p.x+Math.round(p.w/2),p.y+Math.round(p.h/2)+2,'#2e3f58',true);
   }else{
     for(var i=0;i<Math.min(lbRows(),LB.rows.length);i++)
       drawLbRow(lbRowRect(i),LB.rows[i],i+1,LB.rows[i].id===playerId);
   }
+  /* Two lines, not one. The box is 196 wide and these read 203 and 227px on
+     one line, so the long two spilled out over the box's own edges - the
+     offline one by 7px, 'YOU ARE #n' by 31px and to within 5px of the screen
+     edge. Only the short variant ever fitted. */
   var rk=lbRank(),hint;
-  if(LB.mode!=='live')hint='LOCAL ONLY - BOARD IS OFFLINE HERE';
-  else if(rk>lbRows())hint='YOU ARE #'+rk+'  -  TAP FOR THE FULL BOARD';
-  else hint='TAP FOR THE FULL BOARD';
-  txt(hint,W/2,p.y+p.h+5,'#2e3f58',true);
+  if(LB.mode!=='live')hint=['LOCAL ONLY','BOARD IS OFFLINE HERE'];
+  else if(rk>lbRows())hint=['YOU ARE #'+rk,'TAP FOR THE FULL BOARD'];
+  else hint=['TAP FOR THE FULL BOARD'];
+  /* Inside the box, under the last row, and centred on the box - not on the
+     canvas. At W/2 it sat under the MENU BUTTONS instead of under the board,
+     and at p.y+p.h it hung off the bottom edge of a box that now runs almost
+     the full height of the screen. */
+  for(var hi=0;hi<hint.length;hi++)
+    txt(hint[hi],p.x+Math.round(p.w/2),lbTop()+lbRows()*LB_RH+6+hi*9,'#2e3f58',true);
 }
 /* NEW RUN takes the title's own blue so the top of the menu reads as one
    piece. HOW TO PLAY is a bright green, well clear of the GREEN hull's
@@ -2923,35 +3151,40 @@ function drawBoardBlock(){
    buttons look identical - the same trap the old DEMO MODE amber was picked
    to avoid against the ORANGE hull. SPACESHIP's value below is only a
    fallback - the draw always overrides it with the hull. */
-/* Four. A fifth full-width button does not fit a 256x384 canvas - the stack
-   bottoms out at its tappable floor and still runs 29px into the footer - so
-   AI RUN lives on the gameplay page instead, below HOW TO PLAY. */
-var MENU_ITEMS=[['NEW RUN','#8fe9ff'],['SPACESHIP','#c86bff'],
-                ['HOW TO PLAY','#5cff5c'],['SETTINGS','#ff6b6b']];
+/* Four. SPACESHIP used to sit second: the ship itself is the way into the
+   customise page now, drawn big down the left of the menu, so a button that
+   went to the same place was a second door onto one room. AI RUN takes the
+   slot and comes off the gameplay settings page, where it only ever lived
+   because a fifth full-width button did not fit the old 256x384 canvas.
+   ENTER THE VOID wears the purple the hull button used to, which leaves the
+   stack 130 dE from the mint below it at the closest, so no two rows read as
+   the same colour. */
+var MENU_ITEMS=[['ENTER THE VOID','#c86bff'],['AI RUN','#7cf0c0'],
+                ['TUTORIAL','#5cff5c'],['SETTINGS','#ff6b6b']];
 /* The hull button is the one row whose frame and whose contents are coloured
    separately: the frame AND the label keep the purple that settings used to
    wear, and the hull you chose shows only in the ship sprite itself. Settings
    takes a red at the same brightness the purple had, so the set keeps its
    even weight. */
+/* One colour per row, frame and contents alike. The hull button was the only
+   row that ever split the two - its frame kept a fixed purple while its
+   contents took the colour of the ship you had chosen - and that row is gone. */
 function menuChrome(i){return MENU_ITEMS[i][1];}
-function menuContent(i){
-  return MENU_ITEMS[i][0]==='SPACESHIP'?SHIP_THEMES[shipTheme].B:MENU_ITEMS[i][1];
-}
 /* Four buttons do not fit a 256x384 canvas at the old fixed 34+11, and the
    old code just overflowed - the bottom one landed on the footer. So the gap
    closes first, then the buttons themselves shrink, both to a floor that
    stays comfortably tappable. Roomy screens are unchanged. */
 function menuRect(i){
-  var n=MENU_ITEMS.length,h=34,gap=11;
-  var lo=menuStackEnd()+8,hi=H-46,avail=hi-lo;   /* leaves the footer clear */
+  var n=MENU_ITEMS.length,h=38,gap=14;
+  var lo=MENU_TOP,hi=H-26,avail=hi-lo;
   if(n*h+(n-1)*gap>avail){
-    gap=Math.max(5,Math.floor((avail-n*h)/(n-1)));
+    gap=Math.max(6,Math.floor((avail-n*h)/(n-1)));
     if(n*h+(n-1)*gap>avail)
-      h=Math.max(26,Math.floor((avail-(n-1)*gap)/n));
+      h=Math.max(28,Math.floor((avail-(n-1)*gap)/n));
   }
   var tot=n*h+(n-1)*gap;
   var top=lo+Math.max(0,Math.round((avail-tot)/2));
-  return {x:30,y:top+i*(h+gap),w:W-60,h:h};
+  return {x:MENU_CX-Math.round(MENU_W/2),y:top+i*(h+gap),w:MENU_W,h:h};
 }
 function menuGapTop(){return menuStackEnd()+8;}
 /* The wave-100 gate. One tap and the run carries on into insanity; the 100 is
@@ -2973,15 +3206,23 @@ function toMenu(){
 function menuPick(i){
   if(i<0||i>=MENU_ITEMS.length)return;
   var lab=MENU_ITEMS[i][0];
-  sfx.pick();
-  if(lab==='NEW RUN'){testRun=false;reset();}
+  /* ENTER THE VOID is not a journey into a screen - it keeps the plain tap,
+     and the wave fanfare follows it a moment later. */
+  if(lab==='ENTER THE VOID')sfx.pick();else sfx.open();
+  if(lab==='ENTER THE VOID'){testRun=false;reset();}
+  else if(lab==='AI RUN'){
+    /* Straight to the wave picker, which then starts a real run - same waves,
+       same cards, same everything - with the bot at the controls. jumpToWave
+       sets testRun, which is what keeps it off the leaderboard: the board is
+       for people. Moved here from the gameplay settings page. */
+    pickBot=true;pickBuf='';state=PICK;return;
+  }
 
   /* DEMO MODE used to sit here. The whole thing - the wave picker, the PICK
      state, jumpToWave and the testRun guards that keep a demo off the board -
      is still in place and still tested; only the way in was taken off the
      menu. Putting it back is this line and one entry in MENU_ITEMS. */
-  else if(lab==='HOW TO PLAY'){state=INFO;infoBack=MENU;}
-  else if(lab==='SPACESHIP'){state=SETTINGS;setPage=1;setBack=MENU;}
+  else if(lab==='TUTORIAL'){tutStart();}
   else{state=SETTINGS;setPage=0;setBack=MENU;}
 }
 
@@ -3020,7 +3261,7 @@ if(nameIn){
    which reads just as much like "carry on playing". */
 var confirmAct='';
 function askConfirm(what){confirmAct=what;}
-function confirmCard(){return {x:22,y:Math.round(H*0.34),w:W-44,h:92};}
+function confirmCard(){return {x:UI_X+22,y:Math.round(H*0.34),w:UI_W-44,h:92};}
 function confirmYes(){var c=confirmCard();
   return {x:c.x+12,y:c.y+c.h-34,w:Math.round((c.w-34)/2),h:24};}
 function confirmNo(){var c=confirmCard(),y=confirmYes();
@@ -3056,7 +3297,11 @@ function promptTitle(){
 }
 function promptSub(){
   if(promptMode==='code')return 'TAKES BACK YOUR RUNS AND NAME';
-  if(promptMode==='show')return 'KEEP THIS - IT IS HOW YOU GET BACK IN';
+  /* 185px, not 221. The card is 216 wide and this line was the only prompt
+     string longer than it - it hung off BOTH edges of its own card, over the
+     border and onto the dimmed menu behind. Every other title and subtitle
+     fits with room to spare; this one had been written without checking. */
+  if(promptMode==='show')return 'KEEP THIS - IT GETS YOU BACK IN';
   return 'YOUR NAME ON THE LEADERBOARD';
 }
 function drawNameCard(){
@@ -3145,10 +3390,10 @@ function closeNamePrompt(save){
    one from before the roster patch. */
 var BOARD_TABS=[['ALPHA','4'],['PREALPHA','2']];
 function boardTabRect(i){
-  var gap=8,w=Math.round((W-32-gap)/2);
-  return {x:16+i*(w+gap),y:40,w:w,h:18};
+  var gap=8,w=Math.round((UI_W-32-gap)/2);
+  return {x:UI_X+16+i*(w+gap),y:40,w:w,h:18};
 }
-function boardRowRect(i){return {x:16,y:92+i*LB_RH-LB.scroll,w:W-32,h:LB_RH};}
+function boardRowRect(i){return {x:UI_X+16,y:92+i*LB_RH-LB.scroll,w:UI_W-32,h:LB_RH};}
 /* BACK and REFRESH share the footer row the back button used to have. */
 function boardBackRect(){var r=backRect();return {x:r.x,y:r.y,w:Math.round((r.w-10)/2),h:r.h};}
 function boardRefreshRect(){
@@ -3273,10 +3518,10 @@ window.addEventListener('keydown',function(e){
     return;
   }
   if(state===SETTINGS){
-    if(k==='p'||k==='escape'){if(setPage)setPage=0;else closeSettings();return;}
+    if(k==='p'||k==='escape'){sfx.back();if(setPage)setPage=0;else closeSettings();return;}
     if(k>='1'&&k<='9'){
       var n=+k-1;
-      if(setPage===1){var slk=shipList();if(n<slk.length){setShipTheme(slk[n]);sfx.pick();setPage=0;}}
+      if(setPage===1){var slk=shipList();if(n<slk.length){setShipTheme(slk[n]);sfx.pick();}}
       else if(setPage===2){if(n<CHAN.length)chanToggleHit(n);}
       else if(setPage===4){if(n<pfRows().length)pfActivate(n);}
       else if(setPage===3){if(n<gpRows().length)gpActivate(n);}
@@ -3285,12 +3530,20 @@ window.addEventListener('keydown',function(e){
     return;
   }
   if(state===MENU&&askName)return;                /* the field owns the keys */
-  if(state===INFO){ac();sfx.pick();state=infoBack;return;}
+  if(state===INFO){ac();sfx.back();state=infoBack;return;}
+  if(state===TUT){
+    ac();
+    if(k==='escape'){tutExit();return;}
+    if(k==='arrowleft'||k==='backspace'){
+      if(tutStep===0)tutExit();else tutGo(-1);return;}
+    if(k==='arrowright'||k===' '||k==='enter')tutGo(1);
+    return;
+  }
   if(state===MENU){
     /* bounded by the list, not by a literal - adding a button used to need
        this number changed too, and of course it did not get changed */
     if(k>='1'&&k<='9'&&+k<=MENU_ITEMS.length){ac();menuPick(+k-1);return;}
-    if(k==='l'){ac();sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
+    if(k==='l'){ac();sfx.open();LB.scroll=0;state=BOARD;lbLoad();return;}
     if(k===' '||k==='enter'){ac();menuPick(0);return;}
     return;
   }
@@ -3298,13 +3551,13 @@ window.addEventListener('keydown',function(e){
     if(k==='r'){if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}return;}
     if(k==='1'||k==='2'){var tg=(k==='1')?BOARD_ERA:PREV_ERA;
       if(LB.era!==tg){sfx.pick();lbPoll=LB_POLL;lbLoad(tg);}return;}
-    if(k==='escape'||k==='p'||k===' '||k==='enter'){toMenu();return;}
+    if(k==='escape'||k==='p'||k===' '||k==='enter'){sfx.back();toMenu();return;}
     if(k==='arrowdown')LB.scroll=Math.min(boardMaxScroll(),LB.scroll+LB_RH);
     if(k==='arrowup')LB.scroll=Math.max(0,LB.scroll-LB_RH);
     return;
   }
   if(state===PICK){
-    if(k==='escape'||k==='p'){toMenu();return;}
+    if(k==='escape'||k==='p'){sfx.back();toMenu();return;}
     if(k>='0'&&k<='9'){if(pickBuf.length<3)pickBuf+=k;return;}
     if(k==='backspace'){pickBuf=pickBuf.slice(0,-1);return;}
     if(k==='enter'||k===' '){
@@ -3314,7 +3567,7 @@ window.addEventListener('keydown',function(e){
     }
     return;
   }
-  if((k==='p'||k==='escape')&&state===PLAY){openSettings();return;}
+  if((k==='p'||k==='escape')&&state===PLAY){openSettings();return;}   /* openSettings sounds it */
   if(state===LEVELUP&&k>='1'&&k<='9'&&+k<=UPGRADES.length){applyChoice(+k-1);return;}
   if((k===' '||k==='enter')&&state===WIN){ac();enterInsanity();return;}
   if((k===' '||k==='enter')&&state===OVER){ac();toMenu();}
@@ -3334,13 +3587,32 @@ function cardCount(){return choices?choices.length:CARDS;}
 /* heading+rule, stat grid, CHOOSE A CARD, the cards - evenly spaced under
    the HUD. One stack so the screen and the card hit-boxes cannot disagree. */
 var LU_HEAD_H=20, CARD_H=52, CARD_GAP=13;
+/* Three blocks, not four: the heading, the prompt, the cards. The stat grid
+   that used to sit between the heading and the prompt is gone - the run's own
+   stats column is out in the left margin and no longer dimmed, so this was
+   the same six numbers twice on one screen, and it pushed the cards low. */
+/* A function, not a var: FH is assigned nine hundred lines below this one,
+   so a top-level FH*2 here is NaN at load time - which put every card at y
+   null and stacked all three on the same invisible row. */
+function luPromptH(){return FH*2;}
+/* The CARDS are centred, and the heading and prompt share what is left above
+   them. Spreading all three blocks evenly is what the screen did before, and
+   it put the cards' middle 47px below the middle of the screen - they are the
+   thing being chosen and they should sit where the eye already is. */
 function luStack(){
-  var n=cardCount(),tot=n*CARD_H+(n-1)*CARD_GAP;
-  return evenStack(HUD_H,H,[LU_HEAD_H,STATGRID_H,FH,tot]);
+  var n=cardCount(),tot=n*CARD_H+(n-1)*CARD_GAP,
+      top=HUD_H,mid=Math.round((top+H)/2),
+      cards=Math.round(mid-tot/2),
+      head=luPromptH(),
+      above=cards-top-LU_HEAD_H-head,
+      g=Math.max(6,Math.floor(above/3));
+  /* a short canvas falls back to spreading them, rather than overlapping */
+  if(above<18)return evenStack(top,H,[LU_HEAD_H,head,tot]);
+  return {ys:[top+g,top+g+LU_HEAD_H+g,cards],gap:g};
 }
 function cardRect(i){
-  var top=luStack().ys[3];
-  return {x:16,y:top+i*(CARD_H+CARD_GAP),w:224,h:CARD_H};
+  var top=luStack().ys[2];
+  return {x:UI_X+16,y:top+i*(CARD_H+CARD_GAP),w:224,h:CARD_H};
 }
 /* one line per card saying exactly what the pick does */
 function cardDetail(c){
@@ -3400,26 +3672,28 @@ function down(e){
       /* Reached from the menu rather than from settings, so picking a colour
          or backing out returns to the menu instead of dropping the player into
          a settings page they never opened. */
+      /* Picking no longer leaves the page. With one thing to choose, closing
+         on the pick was the whole interaction; with a hull AND a gun colour
+         to set it threw you out after the first of the two, and you could not
+         see what you had just chosen. BACK is now the only way out. */
       var slt=shipList();
       for(i=0;i<slt.length;i++)
-        if(inRect(swatchRect(i),mx,my)){
-          setShipTheme(slt[i]);sfx.pick();
-          if(fromMenu())closeSettings();else setPage=0;
-          return;
-        }
-      if(inRect(backRect(),mx,my)){if(fromMenu())closeSettings();else setPage=0;}
+        if(inRect(swatchRect(i),mx,my)){setShipTheme(slt[i]);sfx.pick();return;}
+      for(i=0;i<BULLET_THEMES.length;i++)
+        if(inRect(bulletRect(i),mx,my)){setBulletTheme(i);sfx.pick();return;}
+      if(inRect(backRect(),mx,my)){pressed(backRect());sfx.back();if(fromMenu())closeSettings();else setPage=0;}
       return;
     }
     if(setPage===4){
       for(i=0;i<pfRows().length;i++)
-        if(inRect(pfRect(i),mx,my)){pfActivate(i);return;}
-      if(inRect(backRect(),mx,my))setPage=0;
+        if(inRect(pfRect(i),mx,my)){pressed(pfRect(i));pfActivate(i);return;}
+      if(inRect(backRect(),mx,my)){pressed(backRect());sfx.back();setPage=0;}
       return;
     }
     if(setPage===3){
       for(i=0;i<gpRows().length;i++)
-        if(inRect(gpRect(i),mx,my)){gpActivate(i);return;}
-      if(inRect(backRect(),mx,my))setPage=0;
+        if(inRect(gpRect(i),mx,my)){pressed(gpRect(i));gpActivate(i);return;}
+      if(inRect(backRect(),mx,my)){pressed(backRect());sfx.back();setPage=0;}
       return;
     }
     if(setPage===2){
@@ -3427,7 +3701,7 @@ function down(e){
         if(inRect(chanToggle(i),mx,my)){chanToggleHit(i);return;}
         if(inRect(chanGrab(i),mx,my)){dragChan=i;chanSet(i,mx);return;}
       }
-      if(inRect(backRect(),mx,my))setPage=0;
+      if(inRect(backRect(),mx,my)){pressed(backRect());sfx.back();setPage=0;}
       return;
     }
     var rw=pageRows();
@@ -3442,10 +3716,32 @@ function down(e){
     return;
   }
   if(state===INFO){sfx.pick();state=infoBack;return;}
+  if(state===TUT){
+    /* Only the three buttons. A tap anywhere else used to be how you left the
+       HOW TO PLAY page, but here the screen is covered in things worth
+       pointing at and a stray tap should not end the lesson. */
+    if(inRect(tutNextRect(),mx,my)){pressed(tutNextRect());tutGo(1);return;}
+    /* BACK on the title card is the way out; on a step it is the step before.
+       One button, because on the title there is nothing behind it but the
+       menu, and a SKIP there would be the same button twice. */
+    if(inRect(tutBackRect(),mx,my)){pressed(tutBackRect());
+      if(tutStep===0)tutExit();else tutGo(-1);return;}
+    if(tutStep>0&&inRect(tutSkipRect(),mx,my)){pressed(tutSkipRect());tutExit();return;}
+    return;
+  }
   if(state===MENU){
-    if(inRect(lbPanel(),mx,my)){sfx.pick();LB.scroll=0;state=BOARD;lbLoad();return;}
+    if(inRect(lbPanel(),mx,my)){pressed(lbPanel());sfx.open();LB.scroll=0;state=BOARD;lbLoad();return;}
+    /* The whole left panel IS the way in. It used to find the SPACESHIP button
+       by label and press it for you; that button is gone, so it opens the page
+       directly. */
+    if(inRect(shipPanel(),mx,my)){
+      /* the hit area is the whole column; what lights up is the ship */
+      var msr=menuShipRect();
+      pressedSprite(MENU_SHIP,msr.x,msr.y);
+      sfx.open();state=SETTINGS;setPage=1;setBack=MENU;return;
+    }
     for(i=0;i<MENU_ITEMS.length;i++)
-      if(inRect(menuRect(i),mx,my)){menuPick(i);return;}
+      if(inRect(menuRect(i),mx,my)){pressed(menuRect(i));menuPick(i);return;}
     return;
   }
   if(state===BOARD){
@@ -3458,12 +3754,12 @@ function down(e){
       if(!LB.busy){sfx.pick();lbPoll=LB_POLL;lbLoad();}
       return;
     }
-    if(inRect(boardBackRect(),mx,my)){sfx.pick();toMenu();return;}  /* resets the era */
+    if(inRect(boardBackRect(),mx,my)){pressed(boardBackRect());sfx.back();toMenu();return;}  /* resets the era */
     dragBoard=true;dragY=my;dragFrom=LB.scroll;
     return;
   }
   if(state===PICK){
-    if(inRect(backRect(),mx,my)){toMenu();return;}
+    if(inRect(backRect(),mx,my)){pressed(backRect());sfx.back();toMenu();return;}
     var wsel=pickAt(mx,my);
     if(wsel){sfx.pick();jumpToWave(wsel);}
     return;
@@ -3500,7 +3796,7 @@ function move(e){
      drag is handled above and still works anywhere on the page. */
   if(mouseSteer&&hasMouse()&&state===PLAY&&e.type==='mousemove'&&!respawnT){
     var hx=pxFromEvent(e),hy=pyFromEvent(e);
-    onField=(hx>=0&&hx<=W&&hy>=HUD_H&&hy<=H);
+    onField=(hx>=FX&&hx<=FR&&hy>=HUD_H&&hy<=H);
     if(onField){ptr.x=hx;ptr.active=true;}
   }
 }
@@ -3533,7 +3829,7 @@ function killAlien(a,i){
     var mt=TYPES.mite,n,sx,mhp=hpOf(mt);
     for(n=0;n<nsp;n++){
       sx=a.x+(n===0?-a.t.w*0.28:a.t.w*0.28);
-      sx=Math.max(mt.w/2+2,Math.min(W-mt.w/2-2,sx));
+      sx=Math.max(FX+mt.w/2+2,Math.min(FR-mt.w/2-2,sx));
       aliens.push({t:mt,x:sx,y:a.y+Math.round(a.t.h/2-mt.h/2),hp:mhp,max:mhp,
         fl:0,spd:mt.spd*curw.spd,base:mt.spd*curw.spd,sh:0,shmax:0,
         quiet:0,ph:0,solid:true,bites:makeAlienBites(mt,5)});
@@ -3567,7 +3863,7 @@ function bossBounty(){
    on screen, weighting things nearest the ship's row most heavily. */
 function safestX(){
   var bestX=W/2,bestScore=-1,i;
-  for(var cx=HITW+2;cx<=W-HITW-2;cx+=4){
+  for(var cx=FX+HITW+2;cx<=FR-HITW-2;cx+=4){
     var worst=1e9;
     for(i=0;i<aliens.length;i++){
       var a=aliens[i];
@@ -3704,8 +4000,8 @@ function botVy(a){
 }
 /* and sideways, which is what a shot has to be led against */
 function botVx(a){
-  if(a.t.drift)return a.dir*a.t.drift*VS;
-  if(a.t.stair&&a.drop<=0)return a.dir*a.t.stair*VS;
+  if(a.t.drift)return a.dir*a.t.drift*HS;
+  if(a.t.stair&&a.drop<=0)return a.dir*a.t.stair*HS;
   return 0;
 }
 /* Where to stand.
@@ -3764,7 +4060,7 @@ function botRate(a,fromX,inflight){
      standing on next frame. */
   var vx=botVx(a),px=a.x,k,tr=0;
   for(k=0;k<2;k++){tr=Math.abs(px-fromX)/BOT_SPD;px=a.x+vx*(tr+fly);}
-  if(px<a.t.w/2)px=a.t.w/2;else if(px>W-a.t.w/2)px=W-a.t.w/2;
+  if(px<FX+a.t.w/2)px=FX+a.t.w/2;else if(px>FR-a.t.w/2)px=FR-a.t.w/2;
   var left=a.hp+(a.sh||0)-(inflight||0);
   if(left<=0)return {x:px,rate:-1,fits:false,dl:0,spend:0};  /* already dead */
   var work=Math.ceil(left/Math.max(1,shot))*gap;
@@ -3838,7 +4134,7 @@ function botAim(){
   if(!best&&low){best=low;bestR=lowR;}
   botT=best;
   var want=best?bestR.x:ship.x;
-  return Math.max(half+1,Math.min(W-half-1,botStep(want)));
+  return Math.max(FX+half+1,Math.min(FR-half-1,botStep(want)));
 }
 /* The sidestep. Only a heavy touch or a meteor is worth leaving a good
    column for: the first costs a 1.1s respawn with the bullets wiped on top
@@ -3862,7 +4158,7 @@ function botStep(want){
   }
   if(!haz.length)return want;
   var bx=want,bc=1e9;
-  for(var cx=half+1;cx<=W-half-1;cx+=2){
+  for(var cx=FX+half+1;cx<=FR-half-1;cx+=2){
     var c=Math.abs(cx-want)*0.06;
     for(i=0;i<haz.length;i++){
       var h=haz[i],ov=h.w-Math.abs(cx-h.x);
@@ -3899,7 +4195,7 @@ function botDir(){
 function update(dt){
   healStamp++;          /* one per frame; see the knitter's heal loop */
   for(var s=0;s<stars.length;s++){
-    stars[s].y+=stars[s].s*dt;
+    stars[s].y+=stars[s].s*dt*(1+warpAmt()*3);
     if(stars[s].y>H){stars[s].y=-1;stars[s].x=Math.random()*W;}
   }
   if(shake>0)shake=Math.max(0,shake-dt*14);
@@ -3915,8 +4211,14 @@ function update(dt){
   gameT+=dt;
   if(lvlLock>0)lvlLock-=dt;      /* ticks while the cards are up, not just in play */
   if(luAnim<LU_ANIM)luAnim+=dt;
+  if(tutT>0)tutT=Math.max(0,tutT-dt);   /* the lesson's text easing in */
+  if(ringT>0)ringT=Math.max(0,ringT-dt); /* ...and the ring travelling */
   if(state===LEVELUP)luT+=dt;
   if(state!==PLAY)return;
+  /* Still flying in from the menu. Nothing spawns, moves or shoots until the
+     ship is where it fights from - the same hold respawnT uses after a death,
+     for the same reason. */
+  if(launchT>0){launchT=Math.max(0,launchT-dt);return;}
   /* Just died: hold everything in place for a beat, play out the explosion,
      then hand the ship back into the same situation it was lost in. */
   if(respawnT>0){
@@ -3945,12 +4247,17 @@ function update(dt){
     if(keys['arrowleft']||keys['a'])dir-=1;
     if(keys['arrowright']||keys['d'])dir+=1;
   }
+  /* ...but not yet. The launch hold above has already returned for the whole
+     flight down, so this is the half second AFTER the ship lands, and it
+     throws away whatever was pressed or pointed at during the flight rather
+     than applying it all at once. */
+  if(moveT>0){moveT=Math.max(0,moveT-dt);dir=0;ptr.active=false;}
   var half=SHIP_W/2;
   /* Touch is absolute: the ship sits under the finger, no lag, no top speed.
      Keys move at a fixed clip; the guard still budgets the slower 240. */
   if(dir!==0){ship.x+=dir*SHIP_SPD*dt;ptr.active=false;}
   else if(ptr.active){ship.x=ptr.x;}
-  ship.x=Math.max(half+1,Math.min(W-half-1,ship.x));
+  ship.x=Math.max(FX+half+1,Math.min(FR-half-1,ship.x));
   /* the hull occupies everything it passed through this frame, so a touch
      flick across the screen collects whatever was in the way */
   var sweepLo=Math.min(shipPrevX,ship.x),sweepHi=Math.max(shipPrevX,ship.x);
@@ -4036,9 +4343,9 @@ function update(dt){
     var vy=al.spd,hw=al.t.w/2;
     if(al.t.drift){
       /* slides across while it falls, turning at the walls */
-      al.x+=al.dir*al.t.drift*VS*dt;
-      if(al.x<hw+2){al.x=hw+2;al.dir=1;}
-      else if(al.x>W-hw-2){al.x=W-hw-2;al.dir=-1;}
+      al.x+=al.dir*al.t.drift*HS*dt;
+      if(al.x<FX+hw+2){al.x=FX+hw+2;al.dir=1;}
+      else if(al.x>FR-hw-2){al.x=FR-hw-2;al.dir=-1;}
     }
     if(al.t.stair){
       /* sideways until it reaches a wall, then a step down and back again.
@@ -4047,10 +4354,10 @@ function update(dt){
         var step=Math.min(al.drop,al.spd*3.2*dt);
         al.y+=step;al.drop-=step;vy=0;
       }else{
-        al.x+=al.dir*al.t.stair*VS*dt;
+        al.x+=al.dir*al.t.stair*HS*dt;
         vy=al.spd*0.22;
-        if(al.x<hw+2){al.x=hw+2;al.dir=1;al.drop=al.t.step*VS;}
-        else if(al.x>W-hw-2){al.x=W-hw-2;al.dir=-1;al.drop=al.t.step*VS;}
+        if(al.x<FX+hw+2){al.x=FX+hw+2;al.dir=1;al.drop=al.t.step*VS;}
+        else if(al.x>FR-hw-2){al.x=FR-hw-2;al.dir=-1;al.drop=al.t.step*VS;}
       }
     }
     if(al.t.shove){
@@ -4063,7 +4370,7 @@ function update(dt){
         var sdx=ov.x-al.x,reach=(al.t.w+ov.t.w)/2;
         if(Math.abs(sdx)>=reach)continue;
         var ohw=ov.t.w/2,dirx=(sdx===0?(Math.random()<0.5?-1:1):(sdx>0?1:-1));
-        ov.x=Math.max(ohw+2,Math.min(W-ohw-2,ov.x+dirx*al.t.shove*VS*dt));
+        ov.x=Math.max(FX+ohw+2,Math.min(FR-ohw-2,ov.x+dirx*al.t.shove*VS*dt));
       }
     }
     if(al.t.heal){
@@ -4118,7 +4425,7 @@ function update(dt){
     var ro=rocks[q];
     ro.x+=ro.vx*dt;ro.y+=ro.vy*dt;ro.fi+=ro.fs*dt;if(ro.fl>0)ro.fl-=dt;
     if(!ro.passed&&ro.y-ro.r>SHIP_Y+SHIP_H){ro.passed=true;dodged++;}
-    if(ro.y-ro.r>H+6||ro.x<-ro.r-90||ro.x>W+ro.r+90){rocks.splice(q,1);continue;}
+    if(ro.y-ro.r>H+6||ro.x<FX-ro.r-90||ro.x>FR+ro.r+90){rocks.splice(q,1);continue;}
     if(respawnT<=0&&invT<=0){
       var bx0=sweepLo-HITW,bx1=sweepHi+HITW,by0=SHIP_Y+5,by1=SHIP_Y+SHIP_H-2;
       var nx=Math.max(bx0,Math.min(ro.x,bx1)),ny=Math.max(by0,Math.min(ro.y,by1));
@@ -4187,7 +4494,12 @@ function update(dt){
 /* A real bitmap font: every pixel is placed on purpose, so it stays razor
    sharp at any zoom instead of going soft the way a rasterised 8px face does.
    Glyphs are cached per colour and blitted. */
-var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......'};
+var GLYPH={'A':'.###.#...##...#######...##...##...#','B':'####.#...##...#####.#...##...#####.','C':'.###.#...##....#....#....#...#.###.','D':'####.#...##...##...##...##...#####.','E':'######....#....####.#....#....#####','F':'######....#....####.#....#....#....','G':'.###.#...##....#.####...##...#.###.','H':'#...##...##...#######...##...##...#','I':'#####..#....#....#....#....#..#####','J':'..###...#....#....#....#.#..#..##..','K':'#...##..#.#.#..##...#.#..#..#.#...#','L':'#....#....#....#....#....#....#####','M':'#...###.###.#.##...##...##...##...#','N':'#...###..##.#.##..###...##...##...#','O':'.###.#...##...##...##...##...#.###.','P':'####.#...##...#####.#....#....#....','Q':'.###.#...##...##...##.#.##..#..##.#','R':'####.#...##...#####.#.#..#..#.#...#','S':'.#####....#.....###.....#....#####.','T':'#####..#....#....#....#....#....#..','U':'#...##...##...##...##...##...#.###.','V':'#...##...##...##...##...#.#.#...#..','W':'#...##...##...##.#.##.#.###.###...#','X':'#...##...#.#.#...#...#.#.#...##...#','Y':'#...##...#.#.#...#....#....#....#..','Z':'#####....#...#...#...#...#....#####','0':'.###.#...##..###.#.###..##...#.###.','1':'..#...##....#....#....#....#...###.','2':'.###.#...#....#...#...#...#...#####','3':'#####...#...#.....#.....##...#.###.','4':'...#...##..#.#.#..#.#####...#....#.','5':'######....####.....#....##...#.###.','6':'..##..#...#....####.#...##...#.###.','7':'#####....#...#...#...#....#....#...','8':'.###.#...##...#.###.#...##...#.###.','9':'.###.#...##...#.####....#...#..##..',' ':'...................................','.':'..........................##...##..',',':'.....................##...##...#...','-':'................###................','+':'.......#....#..#####..#....#.......','=':'..........#####.....#####..........','/':'....#....#...#...#...#...#....#....','%':'##..###.#....#...#...#....#.###..##','(':'...#...#...#....#....#.....#.....#.',')':'.#.....#.....#....#....#...#...#...',':':'......##...##........##...##.......','\'':'..#....#...........................','!':'..#....#....#....#....#.........#..','?':'.###.#...#....#...#...#.........#..','>':'......#.....#.....#...#...#........','<':'........#...#...#.....#.....#......','*':'.....#.#.#.###.#####.###.#.#.#.....','\u2192':'.......#.....#.#####...#...#.......',
+/* A heart the text can contain, so the lesson can show one instead of
+   spelling the word. Drawn as a glyph rather than as a sprite dropped into
+   the line, which means txtW measures it, the wrap breaks around it and the
+   colour of its run paints it - all for free. */
+'\u2665':'.....##.#################.###...#..'};
 var FW=5,FH=7,FADV=6,GCACHE={};
 function glyph(ch,col){
   var key=col+ch;
@@ -4243,14 +4555,53 @@ function drawShipRainbow(){
     }
   }
 }
+/* ---- the thruster ----
+   A tapering flame rather than two stacked bars. Each row is narrower than
+   the one below it, slowly at first and then quickly, so the jet reads as
+   pinching to a point instead of as a rectangle with a smaller rectangle
+   inside it. Widths are in SPRITE pixels and scaled on the way out, so the
+   playfield's 2x ship and the menu's 9x ship get the same shape rather than
+   two hand-tuned versions of it.
+   The flicker is the row count, re-rolled every frame - the same thing the
+   two bars did, just with a shape to flicker. */
+/* The ship is 15 columns wide, so its middle - the nose, and the engine
+   directly under it - is column 7. Everything below counts in COLUMNS of
+   that sprite and is turned into pixels at the end, which is the only way a
+   flame can land on the same pixel grid as the hull it comes out of.
+   Widths are all ODD on purpose. An even width cannot be centred on a single
+   column: a 4-wide row centred by hand came out half a pixel to the right of
+   the engine AND 5px off the sprite's grid, so none of its edges lined up
+   with a hull pixel. */
+var SHIP_MID=(SHIP[0].length-1)/2;
+function flameCols(i,len,wide){
+  var t=(len<2)?1:i/(len-1);
+  return wide?(t<0.35?5:(t<=0.75?3:1)):(t<0.5?3:1);
+}
+function drawThrust(gridX,top,k,f){
+  var len=3+Math.round(f*2),i,n;
+  /* Rounded on the way out. k is a whole number for the menu and the field,
+     but the launch passes through every size between them, and a fillRect at
+     a fractional edge is a soft grey line in a game with no soft edges. */
+  function row(n,i){
+    var x=Math.round(gridX+(SHIP_MID-(n-1)/2)*k), y=Math.round(top+i*k);
+    ctx.fillRect(x,y,Math.max(1,Math.round(n*k)),Math.max(1,Math.round(k)));
+  }
+  /* 5 columns against the engine's 3 - a slight flare at the nozzle */
+  ctx.fillStyle='#ff8a2b';
+  for(i=0;i<len;i++)row(flameCols(i,len,true),i);
+  /* the hotter core, two thirds of the way up and narrower */
+  var inner=Math.max(2,Math.round(len*0.66));
+  ctx.fillStyle='#ffe066';
+  for(i=0;i<inner;i++)row(flameCols(i,inner,false),i);
+}
 function drawShip(){
   if(respawnT>0)return;
   /* The level-up grace shows as colour, so the ship stays solid through it
      even though the post-hit blink would otherwise be hiding it. */
   if(lvlInvT<=0&&invT>0&&Math.floor(invT*12)%2===0)return;
-  var f=Math.random();
-  ctx.fillStyle='#ff8a2b';ctx.fillRect(Math.round(ship.x)-4,SHIP_Y+SHIP_H-2,8,3+Math.round(f*5));
-  ctx.fillStyle='#ffe066';ctx.fillRect(Math.round(ship.x)-2,SHIP_Y+SHIP_H-2,4,2+Math.round(f*3));
+  /* the sprite's left edge, worked out exactly as spr() does, so the flame
+     shares the hull's pixel grid instead of floating near it */
+  drawThrust(Math.round(ship.x-SHIP_SPR.width/2),SHIP_Y+SHIP_H-2,2,Math.random());
   spr(SHIP_SPR,ship.x,SHIP_Y);
   if(lvlInvT>0)drawShipRainbow();
 }
@@ -4357,7 +4708,7 @@ function drawAliens(){
            but real draws going nowhere, which is the exact thing this was
            meant to stop. The left edge needs the WIDTH trimmed too, or the
            arm is drawn at full length from x=0 and laps over the sprite. */
-        if(mid>=0&&mid<H&&arx+4>0&&arx<W){
+        if(mid>=0&&mid<H&&arx+4>FX&&arx<FR){
           var ax0=Math.max(0,arx),aw=Math.min(arx+4,W)-ax0;
           if(aw>0){ctx.fillStyle=a.t.col;ctx.fillRect(ax0,mid,aw,1);}
         }
@@ -4451,13 +4802,19 @@ function drawHeartSeg(x,y,seg){
 /* The row has always ended at x 223, just clear of the gear. Kept as the right
    EDGE and the left x derived, so widening the heart cannot push it under the
    gear the way a hardcoded left x would. */
-var HEART_RIGHT=223, HEART_X=HEART_RIGHT-HEART_W;
+/* Anchored to the RIGHT EDGE, not to a column number. These were 223 and
+   234, measured on a 256-wide bar; on a 640-wide one they left the hearts
+   and the gear huddled in the middle with 400px of empty bar beside them. */
+var HEART_RIGHT=FR-33, HEART_X=HEART_RIGHT-HEART_W;
 /* Centred on the purple like the hearts, and bigger now that the XP
    multiplier has stopped sharing the row with it. The drawn centre comes from
    this rect rather than from numbers of its own, so the art and the tap
    target cannot drift apart. */
-var GEAR_K=1.4;
-var GEAR={x:234,y:2,w:22,h:22};
+/* Off the run's own bar and into the corner of the SCREEN. On the bar it was
+   competing with the score, the wave and the lives for a 360px strip; out
+   here it has the margin to itself and can be big enough to hit. */
+var GEAR_K=1.8;
+var GEAR={x:W-LB_PAD-30,y:5,w:30,h:30};
 /* k scales the whole gear: the radii are measured in unscaled space by
    dividing the distance back down, and the tooth arms widen with it, so the
    shape is the same drawing at any size rather than a thin gear with fat
@@ -4525,29 +4882,53 @@ function rainbowBar(x,y,w,h,speed){
     ctx.fillRect(x+i,y,Math.min(seg,w-i),h);
   }
 }
+function heartsLeft(){return HEART_X-(Math.max(1,hearts())-1)*(HEART_W+2);}
+/* Where the wave number actually lands. Worked out once, here, because the
+   tutorial rings it and a second copy of this arithmetic would have drifted
+   the moment the score gained a digit. Never riding over the score on the
+   left or the hearts on the right is the whole reason it is not just centred. */
+/* Where the score lands. Same reason as waveTxtRect: the last step rings it,
+   and a second copy of this arithmetic would drift the first time the score
+   gained a digit. */
+function scoreTxtRect(){
+  var t='SCORE '+String(score).padStart(6,'0');
+  return {x:FX,y:1,w:txtW(t)+4,h:FH+5};
+}
+function waveTxtRect(){
+  var wTxt='W'+(wi+1),w=txtW(wTxt),
+      wX=FX+Math.round((FIELD_W-w)/2),
+      scoreEnd=FX+2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
+  wX=Math.max(scoreEnd,Math.min(wX,heartsLeft()-5-w));
+  return {x:wX-3,y:1,w:w+6,h:FH+5};
+}
 function drawHud(){
   /* Solid, not see-through. The HUD is drawn after the playfield, so an opaque
      bar is all it takes to keep aliens from showing through the score line -
      and with the spawn moved down to meet it, they now slide out from under
      the bar instead of drifting in from off-canvas above it. */
-  ctx.fillStyle='#120b22';ctx.fillRect(0,0,W,HUD_H);     /* a purple cast */
-  ctx.fillStyle='#432b6e';ctx.fillRect(0,HUD_H-1,W,1);   /* the bar's edge */
+  /* The bar spans the FIELD, not the canvas. Across the whole width it put
+     the hearts and the gear out over the empty right column, a long way from
+     the game they belong to. */
+  /* At 29px a sweep would not read, so the bar darkens up out of the
+     background instead - opaque at every step, so the starfield never shows
+     through it the way it did when the whole group faded together. */
+  var ha=uiChrome();
+  ctx.fillStyle=ha>=1?'#120b22':mixHex('#05040c','#120b22',ha);
+  ctx.fillRect(FX,0,FIELD_W,HUD_H);                             /* a purple cast */
+  ctx.fillStyle=ha>=1?'#432b6e':mixHex('#05040c','#432b6e',ha);
+  ctx.fillRect(FX,HUD_H-1,FIELD_W,1);                           /* the bar's edge */
   /* Everything here is measured and packed, not placed at a fixed column.
      Six figures of score, four of level and a four-digit wave used to run
      straight into each other, because every x was a constant chosen when the
      numbers were small. Score anchors left, the hearts and gear anchor right,
      and the wave sits against the hearts with whatever is between. */
-  txt('SCORE '+String(score).padStart(6,'0'),2,4,'#9fd8ff');
-  var heartsX=HEART_X-(Math.max(1,hearts())-1)*(HEART_W+2);
+  txt('SCORE '+String(score).padStart(6,'0'),FX+2,4,'#9fd8ff');
+  var heartsX=heartsLeft();
   /* No denominator: there is no last wave to count towards. Past the gate the
      number simply goes purple - the colour says which side of 100 you are on
      without a label beside it taking up the room. The number sits dead centre
      and stays there, the same column either side of the gate. */
-  var ins=(wi+1>MAXWAVE),wTxt='W'+(wi+1);
-  var wX=Math.round((W-txtW(wTxt))/2);
-  /* never let it ride over the score on the left or the hearts on the right */
-  var scoreEnd=2+txtW('SCORE '+String(score).padStart(6,'0'))+4;
-  wX=Math.max(scoreEnd,Math.min(wX,heartsX-5-txtW(wTxt)));
+  var ins=(wi+1>MAXWAVE),wTxt='W'+(wi+1),wX=waveTxtRect().x+3;
   /* The wave reads in the bot's own mint while the bot is flying, so there is
      never a doubt about who is at the controls. A colour rather than an extra
      label: the bar is already tight and a new string would have to be fitted
@@ -4559,19 +4940,19 @@ function drawHud(){
      settings and on the level-up screen, which is where a number you check
      between waves belongs. */
   var lvTxt='LV'+level;
-  txt(lvTxt,2,17,'#8fe9ff');
+  txt(lvTxt,FX+2,17,'#8fe9ff');
   var xpTxt='XP '+xp+'/'+xpNeed;
-  var xpRoom=(GEAR.x-4)-(2+txtW(lvTxt)+7);
+  var xpRoom=(GEAR.x-4)-(FX+2+txtW(lvTxt)+7);
   if(txtW(xpTxt)>xpRoom)xpTxt='XP '+xpNeed;        /* tight: show the target */
-  if(txtW(xpTxt)<=xpRoom)txt(xpTxt,2+txtW(lvTxt)+7,17,C_XP);
-  ctx.fillStyle='#13325e';ctx.fillRect(0,27,W,2);
+  if(txtW(xpTxt)<=xpRoom)txt(xpTxt,FX+2+txtW(lvTxt)+7,17,C_XP);
+  ctx.fillStyle='#13325e';ctx.fillRect(FX,27,FIELD_W,2);
   /* A level just landed, or the card screen is up: celebrate either way. The
      rainbow used to be the auto-level consolation prize for having no card
      screen; there is no reason a chosen level should be duller. */
   if(lvlFlash>0||state===LEVELUP){
-    rainbowBar(0,26,W,4);
+    rainbowBar(FX,26,FIELD_W,4);
   }else{
-    ctx.fillStyle=C_XP;ctx.fillRect(0,27,Math.round(W*Math.max(0,Math.min(1,xp/xpNeed))),2);
+    ctx.fillStyle=C_XP;ctx.fillRect(FX,27,Math.round(FIELD_W*Math.max(0,Math.min(1,xp/xpNeed))),2);
   }
   /* Right-anchored and shrinking leftward, the way the row always worked, so
      the leftmost heart is the one currently being chipped. Sat on the bar's
@@ -4612,22 +4993,117 @@ var C_FIRE='#ffffff',C_DMG='#ff5555',C_LUCK='#4fc01f',C_CRIT='#f5f53d',C_CRITD='
    both are low-chroma, and the 32 points of lightness between them read far
    more clearly on black than the number suggests. */
 /* each stat gets its own column: dim caption, bright value underneath */
-function statCell(label,val,col,cx,y){
-  ctx.globalAlpha=0.6;txt(label,cx,y,col,true);ctx.globalAlpha=1;
-  txt(val,cx,y+10,col,true);
+/* statCell lived here, drawing one label-over-value cell for the stat grid.
+   It went with the grid: the margin column draws its own readouts through
+   readBlock, which is right-aligned and spaced down the column rather than
+   centred in a cell. statList, the data behind both, is untouched. */
+/* The six, as data. Both readouts below are built from this one list, so a
+   stat cannot appear on the pause screen with one format and in the field
+   column with another. */
+function statList(){
+  return [['FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' B/S',C_FIRE],
+          ['DMG',      upDmg.toFixed(2)+'x',          C_DMG],
+          ['LUCK',     upLuck+'%',                    C_LUCK],
+          ['CRIT',     upCrit+'%',                    C_CRIT],
+          ['CRIT DMG', upCritD.toFixed(2)+'x',        C_CRITD],
+          ['XP',       upXp.toFixed(2)+'x',           C_XP]];
 }
-/* The build, drawn from one place. The pause screen and the level-up screen
-   both call this, so the format, colours and spacing are identical by
-   construction rather than by two lists that have to be kept in step. */
-function drawStatGrid(y){
-  statCell('FIRE RATE',(FIRE_RATE*upFire).toFixed(1)+' B/S',C_FIRE,49,y);
-  statCell('DMG',      upDmg.toFixed(2)+'x',         C_DMG,  128,y);
-  statCell('LUCK',     upLuck+'%',                   C_LUCK, 207,y);
-  statCell('CRIT',     upCrit+'%',                   C_CRIT,  49,y+24);
-  statCell('CRIT DMG', upCritD.toFixed(2)+'x',       C_CRITD,128,y+24);
-  statCell('XP',       upXp.toFixed(2)+'x',          C_XP,   207,y+24);
+/* drawStatGrid lived here: six stat cells, three across and two down, drawn
+   on the pause screen and again above the level-up cards. Both now leave the
+   build to the column in the left margin, which is never dimmed, so the grid
+   had no caller left. statList, which fed it, still feeds that column. */
+/* ---- the two columns beside the field ----
+   The playfield is a square in the middle, and the space either side of it is
+   for the things you would otherwise have to pause - or die - to find out.
+   Your build goes on the left; what the run has come to goes on the right.
+   Both columns are the same width, the same distance from their own edge of
+   the screen, and share ONE rhythm: six evenly spaced slots at the same
+   heights on both sides. That is what makes them read as a pair rather than
+   as two lists that happen to share a screen. The last slot is placed so its
+   block finishes just above the bottom margin, so the spacing fills the
+   column instead of crowding the top of it. */
+var READ_W=108, READ_TOP=52, READ_SLOTS=6, READ_TALL=21;
+function readSlotY(i){
+  var last=H-20-READ_TALL;
+  return Math.round(READ_TOP+i*(last-READ_TOP)/(READ_SLOTS-1));
 }
-var STATGRID_H=41;
+function statPanel(){return {x:LB_PAD,y:READ_TOP,w:READ_W,h:H-20-READ_TOP};}
+function tallyPanel(){return {x:W-LB_PAD-READ_W,y:READ_TOP,w:READ_W,h:H-20-READ_TOP};}
+/* The columns either side are not the game, so they are solid rather than
+   open space with stars drifting through them: the same purple as the bar
+   across the top of the run, with that bar's lighter edge turned on its side
+   to face the field. Drawn AFTER the playfield, so anything that strays over
+   the boundary is covered by it rather than hanging in the margin. */
+/* Mix two hex colours. Used so a SOLID fill can arrive by changing colour
+   rather than by being painted half-transparent. */
+function mixHex(a,b,t){
+  var A=parseInt(a.slice(1),16),B=parseInt(b.slice(1),16),o='',i,ca,cb;
+  for(i=16;i>=0;i-=8){
+    ca=(A>>i)&255;cb=(B>>i)&255;
+    o+=('0'+Math.round(ca+(cb-ca)*t).toString(16)).slice(-2);
+  }
+  return '#'+o;
+}
+/* p<1 while the run's interface is arriving. The columns are REVEALED, swept
+   in from the outside edges, rather than faded: a solid panel painted at half
+   alpha is a ghost, and this one had the starfield drifting about inside it
+   for the whole third of a second - 18 stars visible through a thing whose
+   whole job is to be the wall the field stops at. Sweeping them keeps them
+   opaque at every moment, and stars stay visible right up until the edge
+   passes over them. */
+function drawSides(p){
+  var lw=(p===undefined||p>=1)?FX:Math.round(FX*p);
+  var rw=(p===undefined||p>=1)?W-FR:Math.round((W-FR)*p);
+  if(lw>0){
+    ctx.fillStyle='#120b22';ctx.fillRect(0,0,lw,H);
+    ctx.fillStyle='#432b6e';ctx.fillRect(lw-1,0,1,H);
+  }
+  if(rw>0){
+    ctx.fillStyle='#120b22';ctx.fillRect(W-rw,0,rw,H);
+    ctx.fillStyle='#432b6e';ctx.fillRect(W-rw,0,1,H);
+  }
+}
+/* One readout: its name quietly, its value plainly under it. `right` right-
+   aligns it against x instead of starting there, which is what the LEFT
+   column needs: left-aligned at its own x it sat hard against the edge of
+   the screen, 124px from the field, while the right column sat 16px from it.
+   The two columns were the same size and the same distance from their own
+   screen edge, but they leaned opposite ways, so the left one read as
+   abandoned over there. Both now sit 16px off the field. */
+function readBlock(x,i,label,value,col,right){
+  var y=readSlotY(i);
+  ctx.globalAlpha=0.55;txt(label,right?x-txtW(label):x,y,col);ctx.globalAlpha=1;
+  txt(value,right?x-txtW(value):x,y+9,col);
+  return y;
+}
+function drawStatColumn(){
+  var p=statPanel(),st=statList(),i;
+  for(i=0;i<st.length;i++)
+    readBlock(p.x+p.w,i,st[i][0],st[i][1],st[i][2],true);
+}
+/* What the run has come to. Every number here was already being counted and
+   was only ever shown on the game-over screen - there was no way to find out
+   how many you had leaked until the leaking had finished. */
+function drawTallyColumn(){
+  var p=tallyPanel();
+  /* The score you are chasing, and whether you are ahead of it. best holds
+     your PREVIOUS best until the run ends, which is exactly the number worth
+     racing while the run is still going. */
+  var y=readBlock(p.x,0,'BEST',best?String(best):'-',C_GOLD);
+  if(best){
+    var d=score-best;
+    /* Ahead: the gain, in green. Behind: how far along you are, NOT the
+       deficit - at wave one that deficit is your entire best score rendered
+       as a minus, which is noise on every run you have not finished yet. */
+    if(d>=0)txt('+'+d,p.x,y+18,'#5ce07a');
+    else txt(Math.round(score/best*100)+'% OF BEST',p.x,y+18,'#7fb4e8');
+  }else txt('FIRST RUN',p.x,y+18,'#2e3f58');
+  readBlock(p.x,1,'KILLS',String(kills),'#9fd8ff');
+  readBlock(p.x,2,'LEAKED',String(leaked),'#ff8f8f');
+  readBlock(p.x,3,'DODGED',String(dodged),'#7cf0c0');
+  readBlock(p.x,4,'BROKEN',String(broken),'#ffa94d');
+  readBlock(p.x,5,'ACCURACY',(shots?Math.round(hits/shots*100):0)+'%','#7fb4e8');
+}
 /* A glare sweeping across the card, built from one-pixel slivers rather than
    a rotated gradient so it costs nothing and needs no path work. It sweeps,
    then rests, so a card does not strobe while it is being read. Only the top
@@ -4715,7 +5191,11 @@ function luEase(delay){
 }
 function drawLevelUp(){
   var e=luEase(0);
-  ctx.fillStyle='rgba(5,4,12,'+(0.86*e).toFixed(3)+')';ctx.fillRect(0,0,W,H);
+  /* The FIELD, not the canvas. The stats down the left and the run's records
+     down the right are what a build decision is made against, and dimming the
+     whole screen put both behind a curtain at the one moment they matter. */
+  ctx.fillStyle='rgba(5,4,12,'+(0.86*e).toFixed(3)+')';
+  ctx.fillRect(FX,0,FIELD_W,H);
   /* The HUD is painted before this screen, so the scrim used to bury it.
      Drawing it again on top keeps score, wave, lives and the XP bar readable
      while you are choosing - you pick a card knowing where you stand. It is
@@ -4725,41 +5205,46 @@ function drawLevelUp(){
   ctx.globalAlpha=e;
   txtBig('LEVEL UP'+(pendLv>1?' +'+(pendLv-1):''),W/2,ys[0]+hoff,'#ffe066',2);
   rainbowBar(W/2-54,ys[0]+18+hoff,108,2,300);
-  drawStatGrid(ys[1]+hoff);
-  txt('CHOOSE A CARD',W/2,ys[2]+hoff,'#8fe9ff',true);
+  txtBig('CHOOSE A CARD',W/2,ys[1]+hoff,'#8fe9ff',2);
   ctx.globalAlpha=1;
   for(var i=0;i<choices.length;i++){
     /* each card a beat behind the one above it, all at rest by LU_ANIM. The
        hit test still uses cardRect, so taps never chase a moving target. */
-    var ce=luEase(i*0.035),rc0=cardRect(i),
-        rc={x:rc0.x,y:rc0.y+Math.round((1-ce)*16),w:rc0.w,h:rc0.h},
-        c=choices[i],R=RARITY[c.r];
-    /* A gold card twitches where it sits. One pixel, thirty times a second,
-       on both axes - enough to catch the eye without being legible as motion.
-       Only the drawing moves; cardRect, which the tap test uses, does not. */
-    if(c.r===3){
-      /* Slow enough to read through. At 30 steps a second this was a buzz and
-         the card could not be read at all; at 7 it holds each position long
-         enough for the eye to settle while still never being still. */
-      var jp=Math.floor(luT*7);
-      rc.x+=(jagLit(i*131+1,jp)?1:0)-(jagLit(i*131+2,jp)?1:0);
-      rc.y+=(jagLit(i*131+3,jp)?1:0)-(jagLit(i*131+4,jp)?1:0);
-    }
-    ctx.globalAlpha=ce;
-    ctx.fillStyle='#0a0f1c';ctx.fillRect(rc.x,rc.y,rc.w,rc.h);
-    /* luT, not gameT+i: every glint starts together when the screen opens
-       and crosses in step, however many of them there are */
-    if(c.r>=2)cardShine(rc,luT,c.r===3?1.7:1);
-    ctx.fillStyle=R.col;
-    ctx.fillRect(rc.x,rc.y,rc.w,1);ctx.fillRect(rc.x,rc.y+rc.h-1,rc.w,1);
-    ctx.fillRect(rc.x,rc.y,1,rc.h);ctx.fillRect(rc.x+rc.w-1,rc.y,1,rc.h);
-    ctx.fillRect(rc.x,rc.y,5,rc.h);
-    if(c.r===3)cardSerrate(rc,gameT+i*1.7,R.col,'#fff3c4');  /* insanity only */
-    txt(c.u.name,rc.x+15,rc.y+10,'#ffffff');
-    if(c.u.kind!=='once')txt('+'+c.u.vals[c.r]+'%',rc.x+rc.w-32,rc.y+10,R.col,true);
-    txt(cardDetail(c),rc.x+15,rc.y+30,c.u.kind==='once'?R.col:'#9fd8ff');
+    drawCardFace(cardRect(i),choices[i],i,luEase(i*0.035));
   }
   ctx.globalAlpha=1;
+}
+/* One card, at whatever rect it is handed. Pulled out of the loop above so the
+   tutorial can show real dealt cards at its own positions and read exactly as
+   the live screen does - a second copy of this would have drifted from it the
+   first time a card gained a field. */
+function drawCardFace(rc0,c,i,ce){
+  var R=RARITY[c.r],
+      rc={x:rc0.x,y:rc0.y+Math.round((1-ce)*16),w:rc0.w,h:rc0.h};
+  /* A gold card twitches where it sits. One pixel, thirty times a second,
+     on both axes - enough to catch the eye without being legible as motion.
+     Only the drawing moves; cardRect, which the tap test uses, does not. */
+  if(c.r===3){
+    /* Slow enough to read through. At 30 steps a second this was a buzz and
+       the card could not be read at all; at 7 it holds each position long
+       enough for the eye to settle while still never being still. */
+    var jp=Math.floor(luT*7);
+    rc.x+=(jagLit(i*131+1,jp)?1:0)-(jagLit(i*131+2,jp)?1:0);
+    rc.y+=(jagLit(i*131+3,jp)?1:0)-(jagLit(i*131+4,jp)?1:0);
+  }
+  ctx.globalAlpha=ce;
+  ctx.fillStyle='#0a0f1c';ctx.fillRect(rc.x,rc.y,rc.w,rc.h);
+  /* luT, not gameT+i: every glint starts together when the screen opens
+     and crosses in step, however many of them there are */
+  if(c.r>=2)cardShine(rc,luT,c.r===3?1.7:1);
+  ctx.fillStyle=R.col;
+  ctx.fillRect(rc.x,rc.y,rc.w,1);ctx.fillRect(rc.x,rc.y+rc.h-1,rc.w,1);
+  ctx.fillRect(rc.x,rc.y,1,rc.h);ctx.fillRect(rc.x+rc.w-1,rc.y,1,rc.h);
+  ctx.fillRect(rc.x,rc.y,5,rc.h);
+  if(c.r===3)cardSerrate(rc,gameT+i*1.7,R.col,'#fff3c4');  /* insanity only */
+  txt(c.u.name,rc.x+15,rc.y+10,'#ffffff');
+  if(c.u.kind!=='once')txt('+'+c.u.vals[c.r]+'%',rc.x+rc.w-32,rc.y+10,R.col,true);
+  txt(cardDetail(c),rc.x+15,rc.y+30,c.u.kind==='once'?R.col:'#9fd8ff');
 }
 /* little pixel icons for the menu rows */
 var IC_SPEAK=['....##.....','...###..#..','..####.#.#.','.#####.#.#.','.#####.#.#.',
@@ -4790,7 +5275,10 @@ var ROWSTYLE={
   'MAIN MENU':    {c:'#19d0c8',t:'#9ff4ee',i:IC_HOME},
   'PLAYER NAME':  {c:'#4fa3ff',t:'#bfe3ff',i:IC_EYE},
   'PROFILE':      {c:'#19d0c8',t:'#9ff4ee',i:IC_EYE},
-  'HOW TO PLAY':  {c:'#5cff5c',t:'#c8ffc8',i:IC_HELP},
+  /* Red. Nothing it sits beside is red - MOUSE STEER above it is cyan - and
+     the two other reds in the interface, RESTART RUN and the menu's SETTINGS,
+     are on screens this one never shares. */
+  'CARD GUIDE':   {c:'#ff5555',t:'#ffc2c2',i:IC_HELP},
   'BACK':         {c:'#4fc01f',t:'#b9ffa8',i:IC_BACK},
   'RESUME':       {c:'#4fc01f',t:'#b6ffb0',i:IC_PLAY},
   'SOUND':        {c:'#4fa3ff',t:'#9fd8ff',i:IC_SPEAK},
@@ -4805,13 +5293,16 @@ function rowStyle(label){
     return dmgNumbers?{c:'#ffd34d',t:'#fff3c4',i:IC_HIT}:{c:'#5a6472',t:'#9aa7b5',i:IC_HIT};
   if(label==='AUTO LEVEL')
     return autoLevel?{c:'#ff5fd2',t:'#ffc4ef',i:IC_UP}:{c:'#5a6472',t:'#9aa7b5',i:IC_UP};
-  if(label==='MOUSE STEER')
-    return mouseSteer?{c:'#8fe9ff',t:'#d4f6ff',i:IC_STICK}:{c:'#5a6472',t:'#9aa7b5',i:IC_STICK};
+  /* One colour either way, unlike the two switches above it. Their greyed-out
+     state means 'this is off', and neither half of this one is off - choosing
+     the keyboard is as much a choice as choosing the mouse. It was written as
+     a ternary returning the same object twice, which said that by accident. */
+  if(label==='CONTROLS')
+    return {c:'#8fe9ff',t:'#d4f6ff',i:IC_STICK};
   /* Mint, and chosen by measurement rather than taste: the first pick was an
      orange that turned out to be the INSANITY rarity colour exactly, and the
      second was within 5 dE of the AUTO LEVEL pink right above it. This one is
      39 dE from its nearest neighbour anywhere in the interface. */
-  if(label==='AI RUN')return {c:'#7cf0c0',t:'#d8fff0',i:IC_EYE};
   return ROWSTYLE[label]||{c:'#24405f',t:'#ffffff',i:null};
 }
 function drawIcon(rows,x,y,col){
@@ -4849,31 +5340,458 @@ function infoRows(){return [
   ['HULL',       '#ff4d6d',['THREE HEARTS, FOUR SEGMENTS EACH.',
                           'KILLING A BOSS PATCHES YOU BACK UP.']]
 ];}
+/* ================= the tutorial =================
+   A real run, honestly levelled by jumpToWave, stopped dead and narrated. It
+   is not a mock-up of the run UI: it IS the run UI, because the tutorial is
+   just another state the run can be drawn behind, the way the pause screen
+   and the card screen are. update() already returns early for anything that
+   is not PLAY, so the starfield keeps moving and the thruster keeps burning
+   while nothing about the game advances - a still picture that does not look
+   dead, for free.
+   Nothing here can reach the leaderboard: jumpToWave sets testRun. */
+/* Wave 14, not wave 1. The lesson points at the stats column and calls it
+   your whole build, so the column has to have a build in it - at wave 1 every
+   line reads 1.00X and the claim is hollow. Fourteen is also clear of the
+   boss on every tenth, which would otherwise be the alien filling the screen
+   during the step about ordinary aliens. */
+var TUT_WAVE=14;
+/* The demo's aliens, by name. Scouts and a drone only: those are the two
+   kinds a wave-one player actually meets, and the step about variants points
+   at the drone, which cannot be done if the cast is whatever the wave-14
+   queue happened to deal. Fractions of the field, so they stay spread at any
+   width; y is below the panel and above the ship. */
+var TUT_DEMO=[{k:'scout',x:0.24,y:176},
+              {k:'drone',x:0.62,y:222},
+              {k:'scout',x:0.40,y:266}];
+/* step 0 is the title card; 1..9 are the lessons */
+var tutStep=0, tutQuiet=false, TUT_FADE=0.16, tutT=0;
+/* Every claim in here is checked against the code in tuttest.js, so a balance
+   change that makes one of these lines false fails the suite rather than
+   quietly misleading a new player. Written as whole sentences and wrapped to
+   the panel at draw time, so the words stay readable in the source and the
+   line breaks follow the panel rather than being guessed once. */
+function tutSteps(){return [
+  /* Three different machines, three different true answers. A phone has no
+     A or D to press and no CONTROLS row to change - it steers by touch, and
+     the ship goes wherever the finger is. Telling a phone player to use the
+     keyboard, and pointing them at a settings row that is not on their
+     screen, is two dead ends in the first step of the lesson. */
+  ['PILOTING',hasMouse()
+    ?['THIS IS YOUR SPACESHIP.',
+      mouseSteer
+        ?'YOU CAN EITHER USE A AND D OR YOUR MOUSE TO CONTROL YOUR SHIP.'
+        :'USE A AND D TO CONTROL YOUR SHIP.',
+      /* named the way settings names it, and pointing at the page it is on */
+      [['YOU CAN CHANGE TO YOUR PREFERRED CONTROL TYPE IN SETTINGS UNDER',null],
+       ['GAMEPLAY.',tutGpCol()]],
+      'YOUR SHIP\'S WEAPON FIRES AUTOMATICALLY.']
+    :['THIS IS YOUR SPACESHIP.',
+      'TOUCH AND DRAG TO FLY - YOUR SHIP GOES WHERE YOUR FINGER IS.',
+      'YOUR SHIP\'S WEAPON FIRES AUTOMATICALLY.'],'ship'],
+  ['THE OPPOSITION',['ALIENS DESCEND IN WAVES.',
+    'KILL THEM BEFORE THEY REACH YOU.',
+    'LETTING ANY ALIEN HIT OR PASS YOU DAMAGES YOUR SHIP\'S HULL.'],'field'],
+  ['SURVIVAL',[[['THESE ARE YOUR',null],['LIVES.',HEART_FULL]],
+    'EACH ONE HAS '+SEG+' SEGMENTS, DIFFERENT ALIENS DEAL DIFFERENT AMOUNTS OF DAMAGE WHEN PASSING OR HITTING YOU.',
+    /* an actual heart, in the hearts' own colour, instead of the word */
+    [['SOME WILL ONLY TAKE AWAY A SEGMENT, OTHERS WILL TAKE AWAY A FULL',null],
+     ['\u2665',HEART_FULL],['OR MORE.',null]],
+    [['LOSE ALL '+START_LIVES,null],['LIVES',HEART_FULL],
+     ['AND YOUR RUN IS OVER...',null]]],'lives'],
+  ['LEVELING UP',['KILLING ALIENS OR COMPLETING A WAVE GRANTS YOU XP.',
+    'DIFFERENT ALIENS GRANT DIFFERENT AMOUNTS OF XP, BIGGER USUALLY MEANS MORE, WITH BOSSES BEING THE MOST.',
+    'FILL UP THIS BAR AND YOU WILL LEVEL UP, THE XP REQUIRED FOR EACH LEVEL GOES UP EVERY TIME.'],'xp'],
+  ['UPGRADES',['LEVELING UP DEALS YOU '+CARDS+' CARDS.',
+    'EACH CARD WILL INCREASE ONE OF THE STATS SHOWN ON THE LEFT SIDE OF THE SCREEN.',
+    /* each name in the colour of the card it names, straight off RARITY, so
+       the legend and the cards under it can never disagree */
+    /* two pairs to a line: as one line it wrapped after 'GOLD =' and left
+       INSANITY stranded on its own */
+    [['GREY = COMMON,',RARITY[0].col],['BLUE = RARE,',RARITY[1].col]],
+    [['PURPLE = ULTRA,',RARITY[2].col],['GOLD = INSANITY.',RARITY[3].col]],
+    'THE HIGHER THE RARITY, THE MORE IT INCREASES YOUR STATS.'],'cards'],
+  ['STATISTICS',['THESE ARE YOUR STATS.',
+    'THE HIGHER THEY ARE THE FURTHER YOU WILL GO.',
+    'THE BUILD YOU CHOOSE IS UP TO YOU.',
+    /* the two words that are buttons, each in its button's own colour.
+       CARD GUIDE reads its colour from the row itself, so recolouring that
+       row moves this with it. */
+    /* split here so the line does not end on 'IN SETTINGS UNDER' with the
+       word it is pointing at orphaned below */
+    [['AN EXPLANATION ON HOW EVERY UPGRADE CARD AND STAT WORKS CAN BE FOUND IN THE',null],
+     ['CARD GUIDE',rowStyle('CARD GUIDE').c]],
+    [['IN SETTINGS UNDER',null],['GAMEPLAY.',tutGpCol()]]],'stats'],
+  ['WAVES',['THIS IS YOUR WAVE COUNTER.',
+    'THE ALIENS GET STRONGER AFTER EVERY WAVE.',
+    /* bossBounty puts you back to exactly three whole hearts, whatever you
+       were on - see the note on it. */
+    'EVERY TENTH WAVE A BOSS APPEARS, DEFEAT THEM TO EARN LOTS OF XP AND RESTORE ALL YOUR LIVES!',
+    'KEEP IN MIND IF A BOSS HITS OR PASSES YOU, YOU WILL DIE INSTANTLY...'],'wave'],
+  ['VARIANTS',['A NEW VARIANT OF ALIENS WILL SHOW UP AFTER EVERY BOSS.',
+    'EVERY VARIANT HAS A DIFFERENT STRENGTH, BE CAREFUL!'],'drone'],
+  ['INSANITY MODE',['TRY SURVIVE AS LONG AS POSSIBLE.',
+    'BEATING THE WAVE '+MAXWAVE+' BOSS WILL LEAD YOU TO INSANITY MODE!',
+    'INSANITY MODE IS INFINITE.',
+    'SEE HOW LONG YOU CAN LAST...'],'wave'],
+  ['LEADERBOARD',['AFTER COMPLETING A RUN YOUR HIGH SCORE AND PERFORMANCE WILL BE SHOWN ON THE LEADERBOARD.',
+    'CLIMB THE RANKS AND EARN YOUR PLACE IN THE VOID.'],'board']
+];}
+/* Greedy wrap to a pixel width, measured with the real glyph advance rather
+   than a character count, so a panel of any width breaks in the right place.
+   A source line is a plain string, or a list of [text,colour] runs for the
+   lines that colour-code something - the rarity names, and the two buttons
+   the lesson sends you to find. Colour travels with the word, so a run that
+   breaks across lines keeps it. */
+function tutRuns(line){
+  return (typeof line==='string')?[[line,null]]:line;
+}
+function tutWordsOf(line){
+  var parts=tutRuns(line),words=[],i,j,ws,w;
+  for(i=0;i<parts.length;i++){
+    ws=String(parts[i][0]).split(' ');
+    for(j=0;j<ws.length;j++){
+      if(ws[j]==='')continue;
+      w=ws[j];
+      /* XP wears the colour it wears in the HUD and down the stats column,
+         wherever it turns up, so the word and the bar are obviously the same
+         thing. Done per word rather than by splitting each sentence by hand -
+         a line written later gets it without anyone remembering to.
+         The third element is how many characters take that colour: a comma
+         after XP is punctuation belonging to the sentence, not part of the
+         word, and painting it blue too made it look like a typo. */
+      if(!parts[i][1]&&/^XP[.,!?]+$/.test(w))words.push([w,C_XP,2]);
+      else if(!parts[i][1]&&w==='XP')words.push([w,C_XP]);
+      else words.push([w,parts[i][1]]);
+    }
+  }
+  return words;
+}
+function tutLineText(l){var o=[],i;for(i=0;i<l.length;i++)o.push(l[i][0]);
+                        return o.join(' ');}
+function tutWrapLine(line,maxw){
+  var words=tutWordsOf(line),out=[],cur=[],i,trial;
+  for(i=0;i<words.length;i++){
+    trial=cur.concat([words[i]]);
+    if(cur.length&&txtW(tutLineText(trial))>maxw){out.push(cur);cur=[words[i]];}
+    else cur=trial;
+  }
+  if(cur.length)out.push(cur);
+  return out;
+}
+function tutBody(i){
+  var src=tutSteps()[i][1],out=[],j,k,w=tutPanel().w-20,ls;
+  for(j=0;j<src.length;j++){ls=tutWrapLine(src[j],w);
+    for(k=0;k<ls.length;k++)out.push(ls[k]);}
+  return out;
+}
+/* One wrapped line, word by word, each in its own colour. A word's advance is
+   its own width plus one space - the same grid txt lays a single string on. */
+function drawTutLine(l,x,y,def){
+  var i,cx=x,w;
+  for(i=0;i<l.length;i++){
+    w=l[i];
+    if(w[2]){                      /* only the first w[2] chars take the colour */
+      txt(w[0].slice(0,w[2]),cx,y,w[1]||def);
+      txt(w[0].slice(w[2]),cx+w[2]*FADV,y,def);
+    }else txt(w[0],cx,y,w[1]||def);
+    cx+=(w[0].length+1)*FADV;
+  }
+}
+function tutStart(){
+  /* A real run at a real wave, with the level and the build the economy
+     actually produces by then, so every number the lesson points at is one
+     the game would really show you. */
+  tutQuiet=true;                  /* the whole setup is silent; see startWave */
+  jumpToWave(TUT_WAVE);
+  autoPlay=false;                 /* nobody is flying it; no pilot watermark */
+  launchT=0;uiT=0;warpT=0;        /* no flight in, no warp: the UI is in place */
+  bannerT=0;                      /* and no 'WAVE 14' shouting over the lesson */
+  tutPopulate();
+  /* The ship spends its first two seconds blinking, which in a still frame
+     means a one-in-two chance of no ship at all under the ring pointing at
+     it. The lesson is not a run; it gets no spawn protection either. */
+  invT=0;lvlInvT=0;respawnT=0;
+  /* A level may well have landed during the setup. Clear the screen it opened;
+     the tutorial deals its own cards for the card step. */
+  pendLv=0;lvlFlash=0;
+  tutDeal();
+  tutQuiet=false;
+  tutStep=0;tutT=TUT_FADE;ringFrom=null;ringT=0;state=TUT;
+}
+/* Built by name through the game's own alien constructor, so a tutorial
+   alien is the same object a real one is. Asking the spawner instead meant
+   taking whatever the wave-14 queue dealt, which is no way to point at a
+   drone. */
+function tutPopulate(){
+  var i,d,t,half;
+  aliens=[];
+  for(i=0;i<TUT_DEMO.length;i++){
+    d=TUT_DEMO[i];t=TYPES[d.k];
+    if(!t)continue;
+    half=t.w/2;
+    aliens.push(newAlien(t,
+      Math.max(FX+half+2,Math.min(FR-half-2,FX+Math.round(FIELD_W*d.x))),
+      d.y,t.spd*curw.spd,rollAffixes(t)));
+  }
+  /* two shots in the air, so the gun looks like it is firing rather than
+     jammed. {x,y} is all a bullet is. */
+  bullets=[{x:Math.round(ship.x),y:SHIP_Y-40},{x:Math.round(ship.x),y:SHIP_Y-96}];
+}
+/* Real cards off the real pool, but one of each rarity rather than whatever
+   the dice give. The step names the four rarities and says the rarer ones are
+   worth more, and a table of three commons - which is what luck at this stage
+   usually deals - shows that exactly not at all. Ascending down the table, so
+   the colours and the numbers climb together as the eye travels. */
+function tutDeal(){
+  var list=shuffle(cardPool()).slice(0,CARDS),i,picked=[];
+  /* Order them so the printed percentages climb as well as the colours. Each
+     card shows its own stat's value at its own rarity, and those tables have
+     different scales - a RARE crit card prints +5% while a COMMON damage card
+     prints +6%, which lands directly under a line saying the rarer one gives
+     more. The deal is still three real cards at one of each rarity; only
+     which of them sits in which row is chosen, and only when an order exists
+     that reads correctly. */
+  var best=null,ord=[[0,1,2],[0,2,1],[1,0,2],[1,2,0],[2,0,1],[2,1,0]],o,v,ok;
+  for(o=0;o<ord.length&&!best;o++){
+    ok=true;v=-1;
+    for(i=0;i<CARDS&&ok;i++){
+      var u=list[ord[o][i]],val=(u.kind==='once')?u.fixed:u.vals[Math.min(i,RARITY.length-1)];
+      if(val<=v)ok=false;else v=val;
+    }
+    if(ok)best=ord[o];
+  }
+  if(!best)best=ord[0];
+  for(i=0;i<list.length;i++)
+    picked.push({u:list[best[i]],r:Math.min(i,RARITY.length-1)});
+  choices=picked;luAnim=LU_ANIM;luT=0;
+}
+/* toMenu does the clearing, the music and the board reload. A hand-rolled
+   version of it here would have been one list of things to forget behind the
+   real one from the first time the real one gained an entry. */
+function tutExit(){sfx.back();choices=null;toMenu();}
+function tutGo(d){
+  var n=tutStep+d;
+  if(n<0)return;
+  if(n>tutSteps().length){tutExit();return;}   /* FINISH goes to the menu */
+  /* Where the ring is RIGHT NOW, not where the last step's target was: on a
+     fast NEXT NEXT the ring is still in flight, and starting the next move
+     from the old target made it jump backwards first. */
+  ringFrom=tutRing();
+  ringT=(n===0||tutStep===0)?0:TUT_RING;
+  tutStep=n;tutT=TUT_FADE;
+  if(d>0&&n===1)sfx.open();else sfx.pick();
+}
+/* the panel, pinned under the HUD */
+/* Under the HUD, not above the ship. At the bottom of the field - the obvious
+   place for it - the panel sat exactly on top of the ship, so the first step
+   pointed a ring at something its own panel was covering. */
+/* One height for every step, sized to the longest. A panel that resized per
+   step moved the buttons under the cursor between clicks. */
+/* The forward button's pink. Measured 41.5 in CIE76 against the nearest
+   colour already on screen - the ULTRA RARE purple - so it cannot be read as
+   a rarity, and 7.0:1 against the panel, so the word on it is legible. */
+var TUT_PINK='#ff5fbf', TUT_PINK_T='#ffd6f0';
+/* The GAMEPLAY word is painted in whatever colour that row actually is, so
+   the lesson and the button it sends you to can never disagree. It was a
+   flat green for a while, which was a colour the row has never been. */
+function tutGpCol(){return rowStyle('GAMEPLAY').c;}
+var TUT_PAD=6, TUT_H=122, TUT_BTN=22, TUT_LINE=9;
+function tutPanel(){return {x:FX+TUT_PAD,y:HUD_H+TUT_PAD,
+                            w:FIELD_W-TUT_PAD*2,h:TUT_H};}
+function tutBelow(){var p=tutPanel();return p.y+p.h+8;}
+function tutNextRect(){var p=tutPanel();
+  return {x:p.x+p.w-96,y:p.y+p.h-8-TUT_BTN,w:88,h:TUT_BTN};}
+function tutBackRect(){var p=tutPanel();
+  return {x:p.x+8,y:p.y+p.h-8-TUT_BTN,w:66,h:TUT_BTN};}
+function tutSkipRect(){var p=tutPanel();
+  return {x:p.x+Math.round((p.w-56)/2),y:p.y+p.h-8-TUT_BTN,w:56,h:TUT_BTN};}
+/* The cards sit high, above the ship, at the live screen's own width so a
+   card reads here exactly as it will when it matters. */
+function tutCardRect(i){var r=cardRect(0);
+  return {x:r.x,y:tutBelow()+i*(r.h+4),w:r.w,h:r.h};}
+/* the row of hearts in the HUD, for the step about lives */
+function heartRowRect(){
+  var y=Math.round((HUD_PURPLE_H-HEART_HT)/2);
+  return {x:heartsLeft()-4,y:y-3,w:(HEART_X+HEART_W)-heartsLeft()+8,h:HEART_HT+6};
+}
+/* What the current step is pointing at. Null on the title card. */
+/* A list of rects, not one: the last step points at the records column AND
+   at the score, which are at opposite corners - a single box round both would
+   be a box round the whole screen. Everything downstream takes a list. */
+function tutTarget(){
+  if(tutStep<1)return null;
+  var k=tutSteps()[tutStep-1][2],i,r,x0,y0,x1,y1;
+  if(k==='board'){r=tallyPanel();
+    return [{x:r.x-4,y:r.y-7,w:r.w+8,h:r.h+12},scoreTxtRect()];}
+  if(k==='ship')return [{x:Math.round(ship.x)-16,y:SHIP_Y-6,w:32,h:34}];
+  if(k==='field')return [{x:FX+2,y:tutBelow()-4,w:FIELD_W-4,h:H-tutBelow()-2}];
+  if(k==='drone'){
+    for(i=0;i<aliens.length;i++)if(aliens[i].t.key==='drone'){
+      var a=aliens[i];
+      return [{x:Math.round(a.x-a.t.w/2)-5,y:Math.round(a.y)-5,
+              w:a.t.w+10,h:a.t.h+10}];
+    }
+    /* nothing to point at: fall back to the field rather than no ring at all */
+    return [{x:FX+2,y:tutBelow()-4,w:FIELD_W-4,h:H-tutBelow()-2}];
+  }
+  if(k==='xp')return [{x:FX,y:13,w:FIELD_W,h:18}];
+  if(k==='lives')return [heartRowRect()];
+  if(k==='stats'){r=statPanel();
+    /* padded outward: the readouts are right-aligned to this panel's right
+       edge, so a ring drawn exactly on it runs through the last letter of
+       every label */
+    return [{x:r.x-4,y:r.y-7,w:r.w+8,h:r.h+12}];}
+  if(k==='wave')return [waveTxtRect()];
+  if(k==='cards'){
+    x0=1e9;y0=1e9;x1=-1e9;y1=-1e9;
+    for(i=0;i<choices.length;i++){r=tutCardRect(i);
+      x0=Math.min(x0,r.x);y0=Math.min(y0,r.y);
+      x1=Math.max(x1,r.x+r.w);y1=Math.max(y1,r.y+r.h);}
+    return [{x:x0-4,y:y0-4,w:x1-x0+8,h:y1-y0+8}];
+  }
+  return null;
+}
+/* The ring travels between steps instead of cutting: it grows or shrinks out
+   of where it was and slides to the new target, so the eye is led from one
+   thing to the next rather than having to find the box again. */
+var TUT_RING=0.34, ringT=0, ringFrom=null;
+function ringP(){return ringT>0?1-ringT/TUT_RING:1;}
+function tutRing(){
+  var to=tutTarget(),i,f,out=[];
+  if(!to)return null;
+  if(ringT<=0||!ringFrom||!ringFrom.length)return to;
+  var e=easeIO(ringP());
+  for(i=0;i<to.length;i++){
+    /* a ring with no counterpart grows out of the last one there was, rather
+       than appearing from nothing in the corner */
+    f=ringFrom[Math.min(i,ringFrom.length-1)];
+    out.push({x:Math.round(f.x+(to[i].x-f.x)*e),y:Math.round(f.y+(to[i].y-f.y)*e),
+              w:Math.round(f.w+(to[i].w-f.w)*e),h:Math.round(f.h+(to[i].h-f.h)*e)});
+  }
+  return out;
+}
+function drawTutorial(){
+  var st=tutSteps(),title=(tutStep===0),
+      step=title?null:st[tutStep-1],i,r;
+  /* The card step dims the run and puts the cards up, the way a level really
+     does. Every other step leaves the run picture alone - it is the thing
+     being explained. */
+  if(step&&step[2]==='cards'){
+    /* The FIELD only, not the whole canvas. This step's own words send you to
+       the stats column down the left, so dimming it along with everything
+       else hid the thing being pointed at. The margins stay lit; the cards
+       still get their dark backdrop. */
+    ctx.fillStyle='rgba(5,4,12,0.86)';ctx.fillRect(FX,0,FIELD_W,H);
+    drawHud();
+    for(i=0;i<choices.length;i++)drawCardFace(tutCardRect(i),choices[i],i,1);
+  }
+  /* The ring round whatever is being talked about, breathing hard enough to
+     find from across the screen. It used to sit between 0.10 and 0.80, which
+     read as a faint shimmer; this reaches full brightness on every beat. */
+  r=tutRing();
+  if(r&&r.length){
+    var pulse=0.62+0.38*Math.sin(gameT*4.6);
+    ctx.globalAlpha=Math.max(0,Math.min(1,pulse));
+    ctx.fillStyle='#ffe066';
+    for(i=0;i<r.length;i++){var q=r[i];
+      ctx.fillRect(q.x,q.y,q.w,1);ctx.fillRect(q.x,q.y+q.h-1,q.w,1);
+      ctx.fillRect(q.x,q.y,1,q.h);ctx.fillRect(q.x+q.w-1,q.y,1,q.h);}
+    ctx.globalAlpha=1;
+  }
+  var p=tutPanel();
+  panel(p,'#5cff5c');
+  var fa=tutT>0?1-tutT/TUT_FADE:1;
+  if(title){
+    /* just the word and the two ways on, centred in the panel */
+    if(fa<1)ctx.globalAlpha=fa;
+    txtBig('TUTORIAL',p.x+Math.round(p.w/2),p.y+Math.round(p.h/2)-22,'#5cff5c',2);
+    if(fa<1)ctx.globalAlpha=1;
+    r=tutBackRect();panel(r,'#4fa3ff');
+    txt('BACK',r.x+Math.round(r.w/2),r.y+Math.round((r.h-FH)/2),'#9fd8ff',true);
+    r=tutNextRect();panel(r,TUT_PINK);
+    txt('START',r.x+Math.round(r.w/2),r.y+Math.round((r.h-FH)/2),TUT_PINK_T,true);
+    return;
+  }
+  txt(step[0],p.x+10,p.y+9,'#5cff5c');
+  var cnt=tutStep+'/'+st.length;
+  txt(cnt,p.x+p.w-10-txtW(cnt),p.y+9,'#3f6490');
+  /* Heading and body ease in on a step change; the panel itself and its
+     buttons stay put, so the furniture never blinks. */
+  if(fa<1)ctx.globalAlpha=fa;
+  var body=tutBody(tutStep-1);
+  for(i=0;i<body.length;i++)drawTutLine(body[i],p.x+10,p.y+23+i*TUT_LINE,'#9fb4cf');
+  if(fa<1)ctx.globalAlpha=1;
+  r=tutBackRect();panel(r,'#4fa3ff');
+  txt('BACK',r.x+Math.round(r.w/2),r.y+Math.round((r.h-FH)/2),'#9fd8ff',true);
+  r=tutSkipRect();
+  txt('SKIP',r.x+Math.round(r.w/2),r.y+Math.round((r.h-FH)/2),'#4e6a8a',true);
+  r=tutNextRect();
+  var last=(tutStep===st.length);
+  panel(r,last?'#ffd34d':TUT_PINK);
+  txt(last?'FINISH':'NEXT',r.x+Math.round(r.w/2),r.y+Math.round((r.h-FH)/2),
+      last?'#fff3c4':TUT_PINK_T,true);
+}
 function drawInfo(){
   ctx.fillStyle='rgba(5,4,12,0.94)';ctx.fillRect(0,0,W,H);
-  txtBig('HOW TO PLAY',W/2,16,'#ffe066',2);
+  txtBig('CARD GUIDE',W/2,16,'#ffe066',2);
   txt('WHAT EVERY CARD ACTUALLY DOES',W/2,34,'#3f6490',true);
-  var rows=infoRows(),y=50,i,j;
+  /* Centred, heading and body alike. These were pinned to x=10, which read
+     as a left margin on a 256-wide page and as a stranded column against the
+     left edge once the canvas went wide. */
+  /* The gap between blocks is shared out rather than fixed at 7. With a fixed
+     7 the page finished at y266 and left 73px of dead screen underneath it on
+     a 360-tall canvas - the text was packed into the top two thirds for no
+     reason. The 7 stays as the floor, so a canvas too short to spread just
+     packs as it always did. */
+  var rows=infoRows(),i,j,body=0;
+  for(i=0;i<rows.length;i++)body+=9+rows[i][2].length*8;
+  var top=50,foot=H-22;
+  var gap=Math.max(7,Math.floor((foot-10-top-body)/Math.max(1,rows.length-1)));
+  var y=top;
   for(i=0;i<rows.length;i++){
-    txt(rows[i][0],10,y,rows[i][1]);
-    for(j=0;j<rows[i][2].length;j++)txt(rows[i][2][j],10,y+9+j*8,'#9fb4cf');
-    y+=9+rows[i][2].length*8+7;
+    txt(rows[i][0],W/2,y,rows[i][1],true);
+    for(j=0;j<rows[i][2].length;j++)txt(rows[i][2][j],W/2,y+9+j*8,'#9fb4cf',true);
+    y+=9+rows[i][2].length*8+gap;
   }
-  txt('TAP ANYWHERE TO GO BACK',W/2,Math.min(y+6,H-16),'#6f8bb0',true);
+  txt('TAP ANYWHERE TO GO BACK',W/2,Math.min(y-gap+10,H-16),'#6f8bb0',true);
 }
 function drawSettings(){
-  ctx.fillStyle='rgba(5,4,12,0.90)';ctx.fillRect(0,0,W,H);
+  /* The FIELD only when a run is behind it. The stats down the left and the
+     run's records down the right are the reason to pause in the first place,
+     and dimming the whole canvas put both of them behind a curtain. Opened
+     from the menu there is nothing out there to protect, so it covers all. */
+  ctx.fillStyle='rgba(5,4,12,0.90)';
+  if(setShowsRun())ctx.fillRect(FX,0,FIELD_W,H);else ctx.fillRect(0,0,W,H);
+  /* Paused mid-run, the top bar stays live under whatever page is open:
+     score, wave, lives and the XP bar. This used to sit further down, after
+     each sub-page had already returned, so the bar was redrawn on the main
+     settings page and left under the scrim on every other one - GAMEPLAY and
+     SOUND showed a greyed-out score for no reason anyone could have named. */
+  if(setShowsRun())drawHud();
   var i,r;
 
   if(setPage===1){                                   /* ship colour */
     txtBig('SPACESHIP',W/2,44,'#ffe066',2);
     txt('TAP A COLOUR',W/2,64,'#3f6490',true);
-    var sl=shipList();
+    var sl=shipList(),swTop=swatchTop();
+    txt('HULL',hullCX(),swTop-18,'#7fb4e8',true);
     for(i=0;i<sl.length;i++){
       r=swatchRect(i);var th=SHIP_THEMES[sl[i]],sel=(sl[i]===shipTheme);
       panel(r,sel?'#ffe066':th.B,sel?'#16233c':'#0a0f1c');
       ctx.drawImage(th.icon,Math.round(r.x+r.w/2-7),r.y+5);
       txt(th.k,r.x+r.w/2,r.y+26,sel?'#ffe066':'#7fb4e8',true);
+    }
+    /* The gun's colour, in its own column. Each square shows a bullet drawn
+       exactly as the gun draws it - body plus the glint on its leading two
+       pixels - at 3x so it is big enough to judge. */
+    txt('BULLET',bullCX(),swTop-18,'#7fb4e8',true);
+    for(i=0;i<BULLET_THEMES.length;i++){
+      r=bulletRect(i);var bt=BULLET_THEMES[i],bsel=(i===bulletTheme);
+      panel(r,bsel?'#ffe066':bt.B,bsel?'#16233c':'#0a0f1c');
+      var bcx=Math.round(r.x+r.w/2)-3,bcy=r.y+5;
+      ctx.fillStyle=bt.B;ctx.fillRect(bcx,bcy,6,15);
+      ctx.fillStyle=bt.T;ctx.fillRect(bcx,bcy,6,6);
+      txt(bt.k,r.x+r.w/2,r.y+26,bsel?'#ffe066':'#7fb4e8',true);
     }
     r=backRect();panel(r,'#3f6490');
     drawIcon(IC_BACK,r.x+12,r.y+Math.round((r.h-9)/2),'#3f6490');
@@ -4930,14 +5848,13 @@ function drawSettings(){
     return;
   }
   var rows=pageRows(),n=rows.length,st=setStack();
-  /* Paused mid-run, the top bar stays live under the heading: score, wave,
-     lives and the XP bar, exactly as the level-up screen shows them. */
-  if(setShowsRun())drawHud();
   txtBig('SETTINGS',W/2,st.ys[st.i.head],'#ffe066',2);
   if(setShowsRun()){
     txt('LEVEL '+level+'   WAVE '+(wi+1),W/2,st.ys[st.i.sub],'#8fe9ff',true);
-    drawStatGrid(st.ys[st.i.stats]);
-    if(shield)txt('SHIELD UP',W/2,st.ys[st.i.stats]+STATGRID_H+4,'#8fe9ff',true);
+    /* The stat grid used to sit here. It is gone: the run's own stats column
+       is three inches to the left and no longer dimmed, so this was the same
+       six numbers twice on one screen. */
+    if(shield)txt('SHIELD UP',W/2,st.ys[st.i.sub]+12,'#8fe9ff',true);
   }
   for(i=0;i<n;i++)drawRow(pageRect(i),rows[i][0],rows[i][1]);
   txt('VOID RUNNER  '+VERSION,W/2,st.ys[st.i.ver],'#2e3f58',true);
@@ -4955,7 +5872,14 @@ function drawRow(r,label,val){
       } else drawIcon(st.i,ix,iy,st.c);
     }
     txt(label,r.x+29,r.y+Math.round((r.h-FH)/2),st.t);
-    if(val)txt(val,r.x+r.w-34,r.y+Math.round((r.h-FH)/2),'#9fd8ff',true);
+    if(val){
+      /* The usual column is a CENTRE at r.w-34, which suits ON, OFF and a
+         number. A value long enough to reach the row's margin from there
+         right-aligns to it instead of hanging off the end. */
+      var vw=txtW(val),vy=r.y+Math.round((r.h-FH)/2);
+      if(r.x+r.w-34+Math.round(vw/2)>r.x+r.w-8)txt(val,r.x+r.w-8-vw,vy,'#9fd8ff');
+      else txt(val,r.x+r.w-34,vy,'#9fd8ff',true);
+    }
 }
 function overlay(title,lines,tcol){
   ctx.fillStyle='rgba(5,4,12,0.82)';ctx.fillRect(0,0,W,H);
@@ -4963,21 +5887,166 @@ function overlay(title,lines,tcol){
   for(var i=0;i<lines.length;i++)
     txt(lines[i],W/2,H/2-26+i*12,i===lines.length-1?'#ffe066':'#7fb4e8',true);
 }
+/* ================= screen transitions =================
+   A screen change is INSTANT, exactly as it always was: state is set in the
+   handler and the next frame draws the new screen. Only the PICTURE animates.
+   The outgoing screen is copied off the canvas - which still holds the last
+   frame that was painted, because nothing has cleared it yet - and then faded
+   out on top of the new one.
+   Doing it this way means no state change had to be deferred behind a timer.
+   Every one of the 33 suites sets a state and asserts on the next frame; a
+   transition that held the change back would have broken all of them, and
+   worse, would have made the game lie about where it was for a fifth of a
+   second at a time.
+   One hook does the whole game: render() notices the screen it is about to
+   draw is not the screen it drew last time. No call site knows this exists. */
+var TR_DUR=0.22, TRT=0, TRC=null, trLast='', pressFlash=null, pressSprite=null;
+/* ---- entering the void ----
+   The starfield already drifts past; for the first half second of a run it
+   stretches and accelerates instead, so the button does what it says. Faster
+   stars streak further than slow ones, which is what makes it read as moving
+   through the field rather than the field just smearing. */
+var WARP_DUR=0.55, warpT=0;
+function warpAmt(){return warpT>0?warpT/WARP_DUR:0;}
+/* ---- the launch ----
+   Pressing ENTER THE VOID does not cut to the field. The menu's furniture -
+   wordmark, badge, buttons, board - fades off, and the ship you have been
+   looking at all this time flies down to the bottom middle and shrinks to the
+   size it fights at, and only once it has landed does the run's own interface
+   arrive.
+   The run is ALREADY live while this plays: state is PLAY from the press, as
+   it always was, so nothing had to be deferred behind a timer and no suite
+   had to change. What the launch does is hold the simulation still for its
+   duration, which is the same thing respawnT does after a death - the field
+   freezes, the clock keeps running, and nothing spawns or shoots into a ship
+   that is still on its way in. */
+var LAUNCH_DUR=0.85, launchT=0;
+/* The run's own interface has its own clock rather than riding the flight's
+   last 28%. Tied to the flight it had to be finished by the moment the ship
+   landed, so it was a quick linear ramp racing the ship down - everything
+   arriving at once, hard, on the same frame the hull stopped. This starts a
+   quarter of a second before the landing and finishes a tenth of a second
+   after it, so the interface arrives ACROSS the landing instead of being
+   timed to beat it. */
+var UI_FADE=0.45, UI_LEAD=0.25, uiT=0, UI_SPLIT=0.55;
+/* Raw position through the window, 0 to 1, before any easing. */
+function uiRaw(){
+  if(uiT<=0)return 1;
+  var done=(LAUNCH_DUR+UI_FADE-UI_LEAD)-uiT;        /* seconds since the press */
+  var t=(done-(LAUNCH_DUR-UI_LEAD))/UI_FADE;
+  return t<=0?0:(t>=1?1:t);
+}
+function smooth(t){return t<=0?0:(t>=1?1:t*t*(3-2*t));}  /* eases in AND out */
+/* Two phases, not one. The walls arrive first and the readouts after them:
+   on one shared curve the text faded up at the same time as the column
+   sweeping in behind it, so the numbers hung in open space waiting to be
+   caught up with - worst on the LEFT, where the stats are right-aligned
+   against the field and the sweep reaches them last of all. */
+function uiChrome(){return smooth(uiRaw()/UI_SPLIT);}
+function uiRead(){return smooth((uiRaw()-UI_SPLIT)/(1-UI_SPLIT));}
+function launchP(){return launchT>0?1-launchT/LAUNCH_DUR:1;}   /* 0 at the press, 1 landed */
+function launching(){return state===PLAY&&launchT>0;}
+/* slow at both ends, quick through the middle - a ship leaving somewhere and
+   arriving somewhere, rather than sliding at a constant rate */
+function easeIO(t){return t<0.5?2*t*t:1-Math.pow(-2*t+2,2)/2;}
+var trOk=false, trLastFlash=null;
+function trSnap(){
+  trOk=false;
+  try{
+    if(!TRC)TRC=document.createElement('canvas');
+    /* Setting the size is what clears it. clearRect would do the same but it
+       needs a method the test sandboxes do not stub, so every transition fell
+       into the catch below and the whole thing was untestable - it looked
+       fine in a browser and did nothing measurable anywhere else. */
+    TRC.width=W;TRC.height=H;
+    var c=TRC.getContext('2d');
+    c.drawImage(cv,0,0);
+    /* The button you just pressed, lit up in the frame that is leaving. The
+       action fires on pointer-down, so there is never a frame between the
+       press and the new screen - without this the click has no visible
+       answer at all, it just cuts. */
+    /* A button IS a box, so a box lights up. The ship is not: its hit area is
+       an invisible 180x262 panel, and filling that lit up a rectangle the
+       person cannot see and does not believe in - it looked like the old
+       framed panel coming back for a moment. Nor does its bounding box help:
+       that is still a square patch over a ship-shaped thing.
+       So the ship lights ITSELF. Drawing the sprite over itself in 'lighter'
+       adds to the pixels that are already there and leaves everything around
+       them alone, so what brightens is exactly the ship. */
+    if(pressSprite){
+      c.globalAlpha=0.55;c.globalCompositeOperation='lighter';
+      c.drawImage(pressSprite.img,pressSprite.x,pressSprite.y);
+      c.globalCompositeOperation='source-over';c.globalAlpha=1;
+      trLastFlash={kind:'sprite',x:pressSprite.x,y:pressSprite.y,
+                   w:pressSprite.img.width,h:pressSprite.img.height};
+    }else if(pressFlash){
+      c.fillStyle='rgba(255,255,255,0.5)';
+      c.fillRect(pressFlash.x,pressFlash.y,pressFlash.w,pressFlash.h);
+      trLastFlash={kind:'box',x:pressFlash.x,y:pressFlash.y,
+                   w:pressFlash.w,h:pressFlash.h};
+    }else trLastFlash=null;
+    trOk=true;
+  }catch(e){}
+  /* If the copy failed there is nothing worth fading - cut straight to the
+     new screen, as it always did, rather than blending in a blank frame. */
+  TRT=trOk?TR_DUR:0;
+  pressFlash=null;pressSprite=null;
+}
+/* Pointer handlers call this with the rect they hit, so the flash lands on
+   the thing that was actually pressed rather than wherever the finger was. */
+function pressed(r){if(r){pressFlash={x:r.x,y:r.y,w:r.w,h:r.h};pressSprite=null;}}
+/* for a thing with a shape rather than a frame */
+function pressedSprite(img,x,y){pressSprite={img:img,x:x,y:y};pressFlash=null;}
 function render(){
+  /* setPage is part of the key: moving between the settings root and the
+     customise page is a screen change to the person looking at it, even
+     though `state` has not moved. */
+  var key=state+','+setPage;
+  if(key!==trLast){
+    /* Not into a launch. The launch IS the transition - it fades the menu off
+       itself, over most of a second - and a crossfade laid on top of that
+       held a copy of the whole menu, ship and press highlight included, for
+       13 frames while the real ship flew away from underneath it. What you
+       saw was the customisation ship left hanging at its old position with
+       its highlight still on, which is exactly what it was. */
+    if(trLast!==''&&!launching())trSnap();
+    else pressFlash=pressSprite=null;   /* or it leaks into the next one */
+    trLast=key;
+  }
   syncCursor();
   var ox=0,oy=0;
   if(shake>0){ox=(Math.random()*2-1)*shake;oy=(Math.random()*2-1)*shake;}
   ctx.save();ctx.translate(Math.round(ox),Math.round(oy));
   ctx.fillStyle='#05040c';ctx.fillRect(-8,-8,W+16,H+16);
-  for(var s=0;s<stars.length;s++){ctx.fillStyle=stars[s].c;ctx.fillRect(Math.round(stars[s].x),Math.round(stars[s].y),1,1);}
+  var wa=warpAmt();
+  for(var s=0;s<stars.length;s++){
+    ctx.fillStyle=stars[s].c;
+    /* 1px as always once the warp has decayed, so nothing about the normal
+       starfield changed - this only ever lengthens it */
+    ctx.fillRect(Math.round(stars[s].x),Math.round(stars[s].y),1,
+                 /* 0.28 puts the fastest layer at a 14px streak with the
+                    near-still one at 4, which is the depth gradient that
+                    makes it read as travel. At 0.09 the longest was 5px and
+                    the average 1.2 - measurably a warp, invisibly so. */
+                 wa>0?1+Math.round(wa*stars[s].s*0.28):1);
+  }
 
   if(runBehind()){
+    /* While the ship is still flying in from the menu, the run's own picture
+       is not there yet: no field edges, no bar across the top, no stats, no
+       aliens. The walls ease in first and the readouts after them - see
+       uiChrome and uiRead - which is the
+       order asked for, and also the only order that makes sense, since there
+       is nothing to report about a run that has not started moving. */
+    var runAl=uiChrome(),readAl=uiRead();
+    if(runAl>0){
+    if(runAl<1)ctx.globalAlpha=runAl;   /* the field's own content */
     for(var b=0;b<bullets.length;b++){
       /* x is the bullet's CENTRE. Drawing a 2px bullet from x put its middle
          a pixel right of the nose, which is visible on a 256-wide canvas. */
-      var bx=Math.round(bullets[b].x)-1;
-      ctx.fillStyle='#ffe066';ctx.fillRect(bx,Math.round(bullets[b].y),2,5);
-      ctx.fillStyle='#fff7c2';ctx.fillRect(bx,Math.round(bullets[b].y),2,2);
+      var bx=Math.round(bullets[b].x)-1,bth=BULLET_THEMES[bulletTheme];
+      ctx.fillStyle=bth.B;ctx.fillRect(bx,Math.round(bullets[b].y),2,5);
+      ctx.fillStyle=bth.T;ctx.fillRect(bx,Math.round(bullets[b].y),2,2);
     }
     drawAliens();drawRocks();
     for(var p=0;p<parts.length;p++){
@@ -4988,8 +6057,32 @@ function render(){
     ctx.globalAlpha=1;
     drawShocks();
     drawHeals();drawDmgNums();drawUpPops();
-    if(state===PLAY||state===LEVELUP||state===SETTINGS){drawShip();drawShield();}
+    /* not while launching: the flying ship IS the ship until it lands, and
+       two of them on screen at once is worse than none */
+    if((state===PLAY||state===LEVELUP||state===SETTINGS||state===TUT)&&!launching()){
+      drawShip();drawShield();
+    }
+    /* out from under the group alpha: these two are opaque at every step */
+    if(runAl<1)ctx.globalAlpha=1;
+    drawSides(runAl);
     drawHud();
+    if(runAl<1)ctx.globalAlpha=runAl;
+    /* Only while actually playing. The pause screen and the card screen both
+       already draw the full stat grid, so leaving this on behind them showed
+       every number twice. */
+    /* the two columns land on their own, later curve */
+    /* SETTINGS too, when it is a pause rather than the menu: the columns are
+       outside the dimmed field and are what the pause is for. */
+    /* LEVELUP too: the card screen no longer draws a grid of its own, so
+       this column is the only place the build is shown while you choose. */
+    if((state===PLAY||state===TUT||state===LEVELUP||
+        (state===SETTINGS&&setShowsRun()))&&readAl>0){
+      if(readAl<1)ctx.globalAlpha=readAl;
+      drawStatColumn();drawTallyColumn();
+      if(readAl<1)ctx.globalAlpha=1;
+    }
+    if(runAl<1)ctx.globalAlpha=1;
+    }
     if(bannerT>0&&state===PLAY){
       /* Bigger than the body text, and purple once past the gate so the wave
          itself says which side of 100 you are on. A boss banner carries its
@@ -5005,7 +6098,7 @@ function render(){
          The DEMO line cannot currently appear: nothing sets state=PICK since
          the wave picker came off the menu. It stays with the rest of the
          vaulted picker, which is one line from returning. */
-      if(autoPlay)txt('BOT  PILOTING',W/2,H-18,'#7cf0c0',true);
+      if(autoPlay)txt('AI  PILOTING',W/2,H-18,'#7cf0c0',true);
       else txt('DEMO  FROM W'+startedAt,W/2,H-18,'#4fa3ff',true);
     if(alarmT>0){
       ctx.fillStyle='rgba(255,70,70,'+(0.30*alarmT/0.6).toFixed(3)+')';
@@ -5021,50 +6114,18 @@ function render(){
   if(state===SETTINGS)drawSettings();
 
   if(state===INFO)drawInfo();
+  if(state===TUT)drawTutorial();
   if(state===PICK)drawPick();
   if(state===BOARD)drawBoard();
-  if(state===MENU){
-    txtBigOut('VOID RUNNER',W/2,titleY(),'#8fe9ff','#7a2fc4',3);
-    /* Build badge, tucked under the wordmark's right shoulder and bobbing so it
-       reads as a note stuck on rather than part of the title. There is no room
-       beside the wordmark - at 3x it is 195 of the 256 columns - so it sits in
-       the gap between the title and the LEADERBOARD heading. That gap closes on
-       short screens, so the badge centres itself in whatever is there and the
-       bob shrinks to match rather than climbing into the heading. */
-    var tbTxt=VERSION+' ALPHA';   /* version first, stage after - as in 2.18.0-alpha */
-    var tbTop=titleY()+FH*3,tbGap=(lbTop()-30)-tbTop;
-    /* Keep TB_CLEAR of air above and below even at the top of the bob, and let
-       the bob take only what is left over. Filling the gap exactly reads as
-       touching the wordmark and the heading, which is how it looked on a
-       desktop window: there the canvas is squashed to the 1.50 aspect floor and
-       the gap is 11px for a 7px glyph. Widening the gap instead would push the
-       board down, and on those canvases it is already showing four rows rather
-       than five - not a trade worth making for a badge. */
-    var tbAmp=Math.max(0,Math.min(TB_BOB,Math.floor((tbGap-FH-TB_CLEAR*2)/2)));
-    var tbY=tbTop+Math.round((tbGap-FH)/2)+Math.round(Math.sin(gameT*3)*tbAmp);
-    txt(tbTxt,W/2+txtBigW('VOID RUNNER',3)/2-txtW(tbTxt),tbY,'#ff79c6');
-    drawBoardBlock();
-    for(var mi=0;mi<MENU_ITEMS.length;mi++){
-      var mr=menuRect(mi),mlab=MENU_ITEMS[mi][0];
-      /* frame and contents are separate: only the hull button differs between
-         them, and that is what shows your ship without recolouring the row */
-      var ch=menuChrome(mi),co=menuContent(mi);
-      panel(mr,ch);
-      ctx.fillStyle=ch;ctx.fillRect(mr.x,mr.y,4,mr.h);
-      var icy=mr.y+Math.round(mr.h/2);
-      if(mlab==='NEW RUN')drawIcon(IC_PLAY,mr.x+14,icy-4,co);
-      else if(mlab==='HOW TO PLAY')drawIcon(IC_HELP,mr.x+14,icy-4,co);
-      else if(mlab==='SPACESHIP')
-        ctx.drawImage(SHIP_THEMES[shipTheme].icon,mr.x+11,icy-8);
-      else drawGear(co,mr.x+19,icy);
-      /* The label takes the frame colour on every row. They are the same value
-         everywhere except the hull button, where the chosen colour is carried
-         by the ship sprite alone. */
-      txt(mlab,W/2,icy-3,ch,true);
-    }
-    txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
-    /* Dimmer than the name above it, so it reads as a footnote. */
-    txt(VERSION,W/2,H-13,'#2e3f58',true);
+  if(state===MENU)drawMenuScreen(1,true);
+  if(launching()){
+    /* The menu going, the ship arriving. The furniture is gone by the time
+       the ship is halfway down, so the two do not fight for attention. */
+    var lp=launchP();
+    /* 0.26, not 0.45: the furniture lingered a third of the way into the
+       flight and the ship was still crossing it. */
+    drawMenuScreen(Math.max(0,1-lp/0.26),false);
+    drawLaunchShip(lp);
   }
   if(state===OVER||state===WIN){
     var acc=shots?Math.round(hits/shots*100):0;
@@ -5092,6 +6153,97 @@ function render(){
      also should not wobble, and the real input is positioned against
      untranslated canvas coordinates. */
   if(askName)drawNameCard();
+
+  /* The outgoing screen, on top of the new one and getting fainter. Drawn
+     last so it covers everything including the name card, and OUTSIDE the
+     shake translate below - a transition should not wobble with the field.
+     ease-out: most of the fade happens early, so the new screen is readable
+     almost at once and the blend reads as quick rather than sluggish. */
+  if(TRT>0&&trOk&&TRC){
+    var a=TRT/TR_DUR;
+    ctx.globalAlpha=a*a;
+    try{ctx.drawImage(TRC,0,0);}catch(e){}
+    ctx.globalAlpha=1;
+  }
+}
+
+/* Where the ship is, and how big, at this point in the flight. Separate from
+   the drawing so a test can read it: a scaled drawImage reports its SOURCE
+   size to the sandboxes, not the size it was drawn at, so measuring the
+   shrink from the recorded draw calls is not possible - it showed 135x135 the
+   whole way down and then snapped to 30. */
+function launchShipRect(p){
+  var from=menuShipRect(),e=easeIO(p);
+  /* A size for every frame, not eight sizes shared between fifty-one of them.
+     Snapping to whole sprite multiples kept the hull at one size for six
+     frames and then jumped it 15px, which read as the ship glitching rather
+     than shrinking. Rounded to whole PIXELS - sub-pixel destinations would
+     blur a pixel sprite - which still gives about fifty distinct sizes on the
+     way down. */
+  var sz=Math.round(from.w+(SHIP_RUN_K*SHIP[0].length-from.w)*e);
+  var k=sz/SHIP[0].length;
+  var cx0=from.x+from.w/2, cy0=from.y+from.h/2;
+  var cx1=FCX,             cy1=SHIP_Y+SHIP_H/2;
+  var cx=cx0+(cx1-cx0)*e,  cy=cy0+(cy1-cy0)*e;
+  return {x:Math.round(cx-sz/2),y:Math.round(cy-sz/2),w:sz,h:sz,k:k};
+}
+function drawLaunchShip(p){
+  var r=launchShipRect(p);
+  ctx.drawImage(SHIP_1X,r.x,r.y,r.w,r.h);
+  drawThrust(r.x,r.y+r.h-r.k,r.k,Math.random());
+}
+
+function drawMenuScreen(al,withShip){
+  if(al<=0)return;
+  ctx.globalAlpha=al;
+    txtBigOut('VOID RUNNER',W/2,titleY(),'#8fe9ff','#7a2fc4',TITLE_K);
+    /* Build badge, tucked under the wordmark's right shoulder and bobbing so it
+       reads as a note stuck on rather than part of the title. There is no room
+       beside the wordmark - at 3x it is 195 of the 256 columns - so it sits in
+       the gap between the title and the LEADERBOARD heading. That gap closes on
+       short screens, so the badge centres itself in whatever is there and the
+       bob shrinks to match rather than climbing into the heading. */
+    var tbTxt=VERSION+' ALPHA';   /* version first, stage after - as in 2.18.0-alpha */
+    var tbTop=titleY()+FH*TITLE_K,tbGap=MENU_TOP-tbTop;
+    /* Keep TB_CLEAR of air above and below even at the top of the bob, and let
+       the bob take only what is left over. Filling the gap exactly reads as
+       touching the wordmark and the heading, which is how it looked on a
+       desktop window: there the canvas is squashed to the 1.50 aspect floor and
+       the gap is 11px for a 7px glyph. Widening the gap instead would push the
+       board down, and on those canvases it is already showing four rows rather
+       than five - not a trade worth making for a badge. */
+    var tbAmp=Math.max(0,Math.min(TB_BOB,Math.floor((tbGap-FH-TB_CLEAR*2)/2)));
+    var tbY=tbTop+Math.round((tbGap-FH)/2)+Math.round(Math.sin(gameT*3)*tbAmp);
+    /* Centred under the wordmark. It was pinned to the wordmark's right
+       shoulder, which at 5x reaches x484 - over the board's column - and then
+       to the button column's right edge, which left it hanging off to one
+       side of a title it belongs to. */
+    txt(tbTxt,W/2,tbY,'#ff79c6',true);
+    drawBoardBlock();
+    for(var mi=0;mi<MENU_ITEMS.length;mi++){
+      var mr=menuRect(mi),mlab=MENU_ITEMS[mi][0];
+      /* frame and contents are separate: only the hull button differs between
+         them, and that is what shows your ship without recolouring the row */
+      var ch=menuChrome(mi);
+      /* Not quite solid: the starfield shows through the buttons rather than
+         being cut out of the screen by four opaque slabs. */
+      /* 0.52, down from 0.74: the stars read through the buttons now rather
+         than being only hinted at. The frame and the label are drawn after
+         this fill and are untouched, so nothing about the text got fainter. */
+      panel(mr,ch,'rgba(10,15,28,0.52)');
+      ctx.fillStyle=ch;ctx.fillRect(mr.x,mr.y,4,mr.h);
+      var icy=mr.y+Math.round(mr.h/2);
+      if(mlab==='ENTER THE VOID')drawIcon(IC_PLAY,mr.x+14,icy-4,ch);
+      else if(mlab==='AI RUN')drawIcon(IC_EYE,mr.x+14,icy-4,ch);
+      else if(mlab==='TUTORIAL')drawIcon(IC_HELP,mr.x+14,icy-4,ch);
+      else drawGear(ch,mr.x+19,icy);
+      txt(mlab,mr.x+Math.round(mr.w/2),icy-3,ch,true);
+    }
+    txt(playerName?('PLAYING AS '+playerName):'NO NAME SET',W/2,H-24,'#5f6a7a',true);
+    /* Dimmer than the name above it, so it reads as a footnote. */
+    txt(VERSION,W/2,H-13,'#2e3f58',true);
+  ctx.globalAlpha=1;
+  if(withShip)drawShipBlock();
 }
 
 /* ================= loop ================= */
@@ -5108,6 +6260,9 @@ var shown=false;
 function frame(now){
   var dt=(now-last)/1000;last=now;
   if(dt>0.05)dt=0.05;
+  if(TRT>0)TRT=Math.max(0,TRT-dt);
+  if(warpT>0)warpT=Math.max(0,warpT-dt);
+  if(uiT>0)uiT=Math.max(0,uiT-dt);
   update(dt);render();
   if(!shown){shown=true;try{cv.style.visibility='visible';}catch(e){}}
   requestAnimationFrame(frame);
