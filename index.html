@@ -66,7 +66,41 @@ canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
    The height barely moved: 360 against the 384 a desktop window was already
    getting, so the descent - and all the balance tuned against it - carries
    over almost unchanged. The WIDTH going 2.5x is the real change. */
-var W=640,H=360;
+/* The host's own badge sits fixed in the bottom-right corner. The canvas is
+   kept clear of it rather than hiding it, so the strip below the canvas is
+   where the badge lives - and the width below is worked out against the
+   height that leaves, or the two would disagree and put the gap back. */
+function badgeInset(){
+  var h='';
+  try{h=(window.location&&window.location.hostname)||'';}catch(e){}
+  return (h.indexOf('netlify')>=0)?58:0;
+}
+/* The canvas takes the SHAPE of the window it opens in. The height is fixed
+   and the playfield is a 360 square in the middle, so a wider window widens
+   the two margins and moves nothing else: the game is the same size, there is
+   simply more room either side of it. A fixed 16:9 canvas had to letterbox
+   on anything that was not 16:9, which on a laptop - where browser chrome
+   makes the viewport wider than the screen - meant a black bar down both
+   sides.
+   Clamped: below 640 the margins stop fitting their columns, and past 880
+   they stop being columns and start being deserts, so very tall or very wide
+   windows letterbox rather than deform. Read once, at load, because every
+   position in the game is derived from W on the lines below this one. */
+var H=360;
+var W=(function(){
+  var vw,vh;
+  try{
+    vw=(window.visualViewport&&window.visualViewport.width)||window.innerWidth;
+    vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
+  }catch(e){}
+  if(!vw||!vh)return 640;
+  var avail=vh-badgeInset();
+  if(avail<80)return 640;
+  var want=Math.round(H*vw/avail);
+  if(!isFinite(want))return 640;
+  if(want%2)want++;                    /* even, so W/2 lands on a whole pixel */
+  return Math.max(640,Math.min(880,want));
+})();
 var REF_H=352, VS=H/REF_H;
 /* The same idea for sideways motion, which never needed it while the field
    was always 256 wide. It does now: a bulwark crosses to a wall and steps
@@ -103,16 +137,6 @@ cv.width=W;cv.height=H;ctx.imageSmoothingEnabled=false;ctx.textBaseline='top';
    one when it costs almost nothing - otherwise take the fractional scale and
    the screen real estate. The old code floored unconditionally, which turned
    a 1.47x phone fit into 1x and left the game tiny. */
-/* The host's own badge sits fixed in the bottom-right corner and swallows
-   touches there, which is exactly where a thumb steers the ship. Keep the
-   canvas clear of it rather than hiding it: the strip below the canvas is
-   where the badge lives. */
-function badgeInset(){
-  /* fit() runs at startup, so this must never throw */
-  var h='';
-  try{h=(window.location&&window.location.hostname)||'';}catch(e){}
-  return (h.indexOf('netlify')>=0)?58:0;
-}
 /* The last viewport height measured with no keyboard over it. */
 var lastFreeH=0;
 function fit(){
@@ -1156,7 +1180,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.100';
+var VERSION='V2.101';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
