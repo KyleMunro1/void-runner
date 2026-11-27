@@ -66,15 +66,6 @@ canvas{image-rendering:pixelated;image-rendering:crisp-edges;background:#05040c;
    The height barely moved: 360 against the 384 a desktop window was already
    getting, so the descent - and all the balance tuned against it - carries
    over almost unchanged. The WIDTH going 2.5x is the real change. */
-/* The host's own badge sits fixed in the bottom-right corner. The canvas is
-   kept clear of it rather than hiding it, so the strip below the canvas is
-   where the badge lives - and the width below is worked out against the
-   height that leaves, or the two would disagree and put the gap back. */
-function badgeInset(){
-  var h='';
-  try{h=(window.location&&window.location.hostname)||'';}catch(e){}
-  return (h.indexOf('netlify')>=0)?58:0;
-}
 /* The canvas takes the SHAPE of the window it opens in. The height is fixed
    and the playfield is a 360 square in the middle, so a wider window widens
    the two margins and moves nothing else: the game is the same size, there is
@@ -94,9 +85,8 @@ var W=(function(){
     vh=(window.visualViewport&&window.visualViewport.height)||window.innerHeight;
   }catch(e){}
   if(!vw||!vh)return 640;
-  var avail=vh-badgeInset();
-  if(avail<80)return 640;
-  var want=Math.round(H*vw/avail);
+  if(vh<80)return 640;
+  var want=Math.round(H*vw/vh);
   if(!isFinite(want))return 640;
   if(want%2)want++;                    /* even, so W/2 lands on a whole pixel */
   return Math.max(640,Math.min(880,want));
@@ -109,7 +99,13 @@ var REF_H=352, VS=H/REF_H;
    manage several, falling 91px in twenty seconds. Horizontal speeds scale
    with the width exactly as vertical ones scale with the height, and a
    crossing takes the same time it always did. */
-var REF_W=256, HS=W/REF_W;
+/* Everything HS moves - the ship, a bulwark's drift, a stair step - moves
+   inside the 360 playfield, and that square is the same size whatever shape
+   the window is. Deriving this from W meant the ship crossed that field in
+   0.30s on an ultrawide against 0.40s on a 640 canvas: the same game played a
+   third faster for having a wider monitor. Every balance number was tuned at
+   640, so this is a tuned constant and is written as one. */
+var REF_W=256, TUNED_W=640, HS=TUNED_W/REF_W;
 /* The interface keeps its ORIGINAL size and sits in a centred column. Panels
    were written as W-60, W-24 and so on, which was right while W was 256 and
    turned a button into a 580px bar the moment the canvas went wide. A menu
@@ -150,19 +146,14 @@ function fit(){
   var typing=(askName===true&&promptMode!=='show');
   if(typing){ if(lastFreeH)vh=Math.max(vh,lastFreeH); }
   else lastFreeH=vh;
-  var inset=badgeInset();
   /* no slack margin: the shape already matches this box, so any margin here
      is a black bar the player can see */
-  var avW=Math.max(80,vw),avH=Math.max(80,vh-inset);
+  var avW=Math.max(80,vw),avH=Math.max(80,vh);
   var s=Math.min(avW/W,avH/H);
   var si=Math.floor(s);
   if(si>=1&&si/s>=0.97)s=si;                 /* crisp only when it is nearly free */
   cv.style.width=Math.round(W*s)+'px';
   cv.style.height=Math.round(H*s)+'px';
-  /* the canvas centres inside #wrap, so padding there lifts it clear of the
-     strip; body padding would do nothing, #wrap is position:fixed */
-  var wrap=document.getElementById('wrap');
-  if(wrap)wrap.style.paddingBottom=inset+'px';
   placeNameInput();
 }
 window.addEventListener('resize',fit);
@@ -1180,7 +1171,7 @@ function bulletDmg(){return DMG*upDmg;}
 function pct(m){return Math.round((m-1)*100);}
 
 /* ================= waves ================= */
-var VERSION='V2.101';
+var VERSION='V2.102';
 var MAXWAVE=100;
 /* Difficulty is carried by HP, speed, concurrency and spawn rate rather than
    by ever-longer waves, so a late wave is savage but still finishes. */
